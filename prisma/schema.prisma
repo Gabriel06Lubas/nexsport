@@ -1,0 +1,1151 @@
+// =============================================================================
+// nexport — PostgreSQL schema (Prisma ORM)
+// =============================================================================
+//
+// Conventions
+// -----------
+// * IDs are CUIDs (string) so they are URL-safe and do not leak row counts.
+// * Money is stored as integer minor units (cents) + ISO-4217 currency code.
+// * Every tenant-owned row carries `clubId` so queries can always be scoped
+//   to a club (and so Postgres RLS can be layered on later).
+// * Timestamps are `timestamptz` (Prisma `DateTime` + `@db.Timestamptz(3)`).
+//
+// Constraints Prisma cannot express (CHECKs, the GiST exclusion constraint
+// that blocks facility double-booking, and the equipment-capacity trigger)
+// live in `prisma/migrations/*_booking_guards_and_checks/migration.sql`.
+// Prisma ignores them when diffing, so they survive future `migrate dev` runs.
+// =============================================================================
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// =============================================================================
+// ENUMS
+// =============================================================================
+
+/// Platform-wide role, embedded in the Auth.js JWT for coarse RBAC.
+/// Fine-grained, per-club authority lives in `ClubMember.role`.
+enum UserRole {
+  SUPER_ADMIN
+  CLUB_OWNER
+  STAFF
+  COACH
+  STUDENT
+}
+
+/// The role a user holds *inside a specific club*.
+enum ClubRole {
+  OWNER
+  STAFF
+  COACH
+  STUDENT
+}
+
+enum ClubMemberStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+  LEFT
+}
+
+/// Granular permissions granted to STAFF members (owners implicitly have all).
+enum ClubPermission {
+  MANAGE_CLUB_SETTINGS
+  MANAGE_FACILITIES
+  MANAGE_EQUIPMENT
+  MANAGE_MEMBERS
+  MANAGE_SCHEDULE
+  MANAGE_BILLING
+  VIEW_ANALYTICS
+  MANAGE_SOCIAL
+}
+
+enum ClubStatus {
+  PENDING_SETUP
+  ACTIVE
+  SUSPENDED
+  ARCHIVED
+}
+
+enum FacilityType {
+  FOOTBALL_PITCH
+  FUTSAL_COURT
+  PADEL_COURT
+  TENNIS_COURT
+  BASKETBALL_COURT
+  GYM
+  STUDIO
+  POOL
+  TRACK
+  MULTIPURPOSE
+  OTHER
+}
+
+enum SurfaceType {
+  NATURAL_GRASS
+  ARTIFICIAL_TURF
+  CLAY
+  HARD_COURT
+  SYNTHETIC
+  WOOD
+  RUBBER
+  OTHER
+}
+
+enum EquipmentCondition {
+  NEW
+  GOOD
+  FAIR
+  NEEDS_REPAIR
+  RETIRED
+}
+
+enum EquipmentBookingStatus {
+  RESERVED
+  CHECKED_OUT
+  RETURNED
+  CANCELLED
+}
+
+enum SessionStatus {
+  DRAFT
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum ParticipantStatus {
+  INVITED
+  ACCEPTED
+  DECLINED
+  WAITLISTED
+  CANCELLED // participant cancelled after accepting (refund policy applies)
+  REMOVED // removed by coach/staff
+}
+
+enum AttendanceStatus {
+  PRESENT
+  LATE
+  ABSENT
+  EXCUSED
+}
+
+enum FollowStatus {
+  PENDING // target profile is private and has not approved yet
+  ACCEPTED
+}
+
+enum PostVisibility {
+  PUBLIC
+  FOLLOWERS
+  CLUB // visible to members of `Post.clubId`
+  PRIVATE
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+}
+
+enum ConversationType {
+  DIRECT
+  GROUP
+}
+
+// ---- Billing ---------------------------------------------------------------
+
+enum SubscriptionTier {
+  FREE
+  STARTER
+  PRO
+  ENTERPRISE
+}
+
+/// Mirrors Stripe's `subscription.status`.
+enum SubscriptionStatus {
+  INCOMPLETE
+  INCOMPLETE_EXPIRED
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  UNPAID
+  PAUSED
+}
+
+enum StripeAccountType {
+  EXPRESS
+  CUSTOM
+}
+
+enum StripeAccountStatus {
+  ONBOARDING // created, KYC not yet submitted
+  PENDING_VERIFICATION // submitted, Stripe reviewing
+  ACTIVE // charges_enabled && payouts_enabled
+  RESTRICTED // requirements past due
+  REJECTED
+}
+
+/// Mirrors the Stripe PaymentIntent lifecycle.
+enum PaymentStatus {
+  REQUIRES_PAYMENT_METHOD
+  REQUIRES_CONFIRMATION
+  REQUIRES_ACTION
+  PROCESSING
+  SUCCEEDED
+  CANCELED
+  FAILED
+}
+
+enum RefundStatus {
+  NONE
+  PENDING
+  PARTIALLY_REFUNDED
+  REFUNDED
+  FAILED
+}
+
+/// Mirrors Stripe's `dispute.status` (chargebacks).
+enum DisputeStatus {
+  NONE
+  WARNING_NEEDS_RESPONSE
+  WARNING_UNDER_REVIEW
+  WARNING_CLOSED
+  NEEDS_RESPONSE
+  UNDER_REVIEW
+  WON
+  LOST
+}
+
+enum TransferRecipientType {
+  CLUB
+  COACH
+}
+
+enum TransferStatus {
+  PENDING
+  PAID
+  REVERSED
+  FAILED
+}
+
+// ---- Notifications ---------------------------------------------------------
+
+enum NotificationType {
+  SESSION_INVITE
+  SESSION_INVITE_ACCEPTED
+  SESSION_INVITE_DECLINED
+  SESSION_UPDATED
+  SESSION_CANCELLED
+  SESSION_REMINDER
+  ATTENDANCE_FEEDBACK
+  PAYMENT_SUCCEEDED
+  PAYMENT_FAILED
+  REFUND_ISSUED
+  CLUB_INVITE
+  NEW_FOLLOWER
+  FOLLOW_REQUEST
+  POST_LIKED
+  POST_COMMENTED
+  COMMENT_REPLIED
+  COMMENT_LIKED
+  NEW_MESSAGE
+  SYSTEM
+}
+
+// =============================================================================
+// AUTH & IDENTITY  (Auth.js v5 Prisma adapter compatible)
+// =============================================================================
+
+model User {
+  id               String    @id @default(cuid())
+  name             String?
+  email            String    @unique
+  emailVerified    DateTime? @db.Timestamptz(3)
+  image            String?
+  /// bcrypt/argon2 hash; null for OAuth-only users.
+  passwordHash     String?
+  role             UserRole  @default(STUDENT)
+  /// Club the user last worked in; seeds `token.clubId` on sign-in.
+  activeClubId     String?
+  /// Stripe Customer used when this user pays for sessions / coach SaaS plan.
+  stripeCustomerId String?   @unique
+  createdAt        DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @db.Timestamptz(3)
+  deletedAt        DateTime? @db.Timestamptz(3)
+
+  // Auth.js
+  accounts Account[]
+  sessions Session[]
+
+  // Identity / social
+  profile   Profile?
+  followers Follow[]  @relation("FollowFollowing")
+  following Follow[]  @relation("FollowFollower")
+  posts     Post[]
+  comments  Comment[]
+  likes     Like[]
+
+  // Clubs
+  activeClub  Club?        @relation("UserActiveClub", fields: [activeClubId], references: [id], onDelete: SetNull)
+  ownedClubs  Club[]       @relation("ClubOwner")
+  memberships ClubMember[]
+
+  // Scheduling
+  coachedSessions       PracticeSession[]    @relation("SessionCoach")
+  createdSessions       PracticeSession[]    @relation("SessionCreator")
+  cancelledSessions     PracticeSession[]    @relation("SessionCanceller")
+  sessionParticipations SessionParticipant[] @relation("ParticipantUser")
+  sentSessionInvites    SessionParticipant[] @relation("ParticipantInviter")
+  attendances           Attendance[]         @relation("AttendanceUser")
+  markedAttendances     Attendance[]         @relation("AttendanceMarker")
+
+  // Messaging
+  conversationMemberships ConversationParticipant[]
+  messages                Message[]
+  createdConversations    Conversation[]            @relation("ConversationCreator")
+
+  // Billing
+  subscriptions Subscription[]
+  stripeAccount StripeAccount?
+  payments      PaymentTransaction[] @relation("PaymentPayer")
+  coachPayments PaymentTransaction[] @relation("PaymentCoach")
+
+  // Notifications
+  notifications      Notification[] @relation("NotificationRecipient")
+  actorNotifications Notification[] @relation("NotificationActor")
+
+  @@index([role])
+}
+
+model Account {
+  id                String   @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?  @db.Text
+  access_token      String?  @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?  @db.Text
+  session_state     String?
+  createdAt         DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime @updatedAt @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+/// Auth.js database session. nexport uses the JWT strategy (required for
+/// edge middleware RBAC), but the adapter still expects this table.
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime @db.Timestamptz(3)
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime @db.Timestamptz(3)
+
+  @@id([identifier, token])
+}
+
+model Profile {
+  id             String    @id @default(cuid())
+  userId         String    @unique
+  /// Lower-cased @handle, unique platform-wide (normalised in the service layer).
+  handle         String    @unique
+  displayName    String
+  bio            String?   @db.VarChar(500)
+  avatarUrl      String?
+  coverUrl       String?
+  location       String?
+  websiteUrl     String?
+  dateOfBirth    DateTime? @db.Date
+  /// Private profiles require follow approval (FollowStatus.PENDING).
+  isPrivate      Boolean   @default(false)
+  /// Denormalised counters, maintained transactionally by the social service.
+  followerCount  Int       @default(0)
+  followingCount Int       @default(0)
+  postCount      Int       @default(0)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(3)
+
+  user   User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sports ProfileSport[]
+}
+
+model ProfileSport {
+  profileId String
+  sportId   String
+  /// Free-form level, e.g. "Beginner", "NTRP 4.0", "Playtomic 3.5".
+  level     String?
+
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  sport   Sport   @relation(fields: [sportId], references: [id], onDelete: Cascade)
+
+  @@id([profileId, sportId])
+  @@index([sportId])
+}
+
+model Follow {
+  followerId  String
+  followingId String
+  status      FollowStatus @default(ACCEPTED)
+  createdAt   DateTime     @default(now()) @db.Timestamptz(3)
+
+  follower  User @relation("FollowFollower", fields: [followerId], references: [id], onDelete: Cascade)
+  following User @relation("FollowFollowing", fields: [followingId], references: [id], onDelete: Cascade)
+
+  // CHECK (followerId <> followingId) — see SQL migration.
+  @@id([followerId, followingId])
+  @@index([followingId, status])
+}
+
+// =============================================================================
+// ORGANISATION & ASSETS
+// =============================================================================
+
+model Club {
+  id               String     @id @default(cuid())
+  slug             String     @unique
+  name             String
+  description      String?
+  logoUrl          String?
+  coverUrl         String?
+  email            String?
+  phone            String?
+  websiteUrl       String?
+  addressLine1     String?
+  addressLine2     String?
+  city             String?
+  region           String?
+  postalCode       String?
+  /// ISO-3166-1 alpha-2
+  country          String     @db.Char(2)
+  /// IANA tz, e.g. "Europe/Madrid". All scheduling UI renders in this zone.
+  timezone         String     @default("UTC")
+  /// ISO-4217, default currency for sessions and payouts.
+  currency         String     @default("eur") @db.Char(3)
+  status           ClubStatus @default(PENDING_SETUP)
+  ownerId          String
+  /// Stripe Customer billed for the club's SaaS subscription.
+  stripeCustomerId String?    @unique
+  createdAt        DateTime   @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime   @updatedAt @db.Timestamptz(3)
+  deletedAt        DateTime?  @db.Timestamptz(3)
+
+  owner                User                 @relation("ClubOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  activeForUsers       User[]               @relation("UserActiveClub")
+  members              ClubMember[]
+  sports               ClubSport[]
+  ageGroups            AgeGroup[]
+  facilities           Facility[]
+  equipment            Equipment[]
+  equipmentBookings    EquipmentBooking[]
+  coachAssignments     CoachAssignment[]
+  sessions             PracticeSession[]
+  cancellationPolicies CancellationPolicy[]
+  posts                Post[]
+  conversations        Conversation[]
+  subscriptions        Subscription[]
+  stripeAccount        StripeAccount?
+  payments             PaymentTransaction[]
+  notifications        Notification[]
+
+  @@index([ownerId])
+  @@index([status])
+}
+
+/// Global sport catalogue (managed by SUPER_ADMIN). Clubs opt in via ClubSport.
+model Sport {
+  id        String   @id @default(cuid())
+  slug      String   @unique // "football", "padel", "tennis", "fitness"
+  name      String
+  iconUrl   String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  clubs            ClubSport[]
+  facilities       FacilitySport[]
+  ageGroups        AgeGroup[]
+  sessions         PracticeSession[]
+  profiles         ProfileSport[]
+  coachAssignments CoachAssignment[]
+}
+
+model ClubSport {
+  clubId  String
+  sportId String
+
+  club  Club  @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  sport Sport @relation(fields: [sportId], references: [id], onDelete: Restrict)
+
+  @@id([clubId, sportId])
+  @@index([sportId])
+}
+
+model AgeGroup {
+  id        String   @id @default(cuid())
+  clubId    String
+  /// Optional: age group specific to one sport (e.g. "U12 Football").
+  sportId   String?
+  name      String // "U10", "Juniors", "Adults", "Seniors 50+"
+  minAge    Int?
+  maxAge    Int?
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  club             Club              @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  sport            Sport?            @relation(fields: [sportId], references: [id], onDelete: SetNull)
+  members          ClubMember[]
+  sessions         PracticeSession[]
+  coachAssignments CoachAssignment[]
+
+  // CHECK (minAge IS NULL OR maxAge IS NULL OR minAge <= maxAge) — see SQL migration.
+  @@unique([clubId, name])
+}
+
+/// Links a user to a club with a club-scoped role. A user may hold several
+/// roles in the same club (e.g. STAFF + COACH) — one row per role.
+model ClubMember {
+  id          String           @id @default(cuid())
+  clubId      String
+  userId      String
+  role        ClubRole
+  status      ClubMemberStatus @default(INVITED)
+  /// Only meaningful for STAFF; OWNER implicitly holds every permission.
+  permissions ClubPermission[] @default([])
+  title       String? // "Head Coach", "Front Desk"
+  /// Students are typically placed in an age group / squad.
+  ageGroupId  String?
+  invitedAt   DateTime         @default(now()) @db.Timestamptz(3)
+  joinedAt    DateTime?        @db.Timestamptz(3)
+  leftAt      DateTime?        @db.Timestamptz(3)
+  createdAt   DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime         @updatedAt @db.Timestamptz(3)
+
+  club     Club      @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ageGroup AgeGroup? @relation(fields: [ageGroupId], references: [id], onDelete: SetNull)
+
+  coachAssignments   CoachAssignment[] @relation("AssignmentCoach")
+  studentAssignments CoachAssignment[] @relation("AssignmentStudent")
+
+  @@unique([clubId, userId, role])
+  @@index([userId, status])
+  @@index([clubId, role, status])
+}
+
+/// Assigns a coach to a student, a squad (age group) and/or a sport.
+model CoachAssignment {
+  id              String    @id @default(cuid())
+  clubId          String
+  coachMemberId   String
+  studentMemberId String?
+  ageGroupId      String?
+  sportId         String?
+  startsOn        DateTime  @default(now()) @db.Date
+  endsOn          DateTime? @db.Date
+  createdAt       DateTime  @default(now()) @db.Timestamptz(3)
+
+  club     Club        @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  coach    ClubMember  @relation("AssignmentCoach", fields: [coachMemberId], references: [id], onDelete: Cascade)
+  student  ClubMember? @relation("AssignmentStudent", fields: [studentMemberId], references: [id], onDelete: Cascade)
+  ageGroup AgeGroup?   @relation(fields: [ageGroupId], references: [id], onDelete: Cascade)
+  sport    Sport?      @relation(fields: [sportId], references: [id], onDelete: Cascade)
+
+  // CHECK (studentMemberId IS NOT NULL OR ageGroupId IS NOT NULL) — see SQL migration.
+  @@index([clubId])
+  @@index([coachMemberId])
+  @@index([studentMemberId])
+}
+
+/// A bookable field / court / room.
+model Facility {
+  id               String       @id @default(cuid())
+  clubId           String
+  name             String // "Court 3", "Main Pitch"
+  type             FacilityType
+  surface          SurfaceType?
+  isIndoor         Boolean      @default(false)
+  hasLighting      Boolean      @default(false)
+  /// Max people on the facility at once (used to cap session size).
+  capacity         Int?
+  /// Optional rental price (minor units / hour) used for utilisation revenue.
+  hourlyRateAmount Int?
+  /// Turnover buffer enforced by the scheduling service around each booking.
+  bufferMinutes    Int          @default(0)
+  isActive         Boolean      @default(true)
+  createdAt        DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime     @updatedAt @db.Timestamptz(3)
+
+  club     Club              @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  sports   FacilitySport[]
+  sessions PracticeSession[]
+
+  @@unique([clubId, name])
+  // Needed for the composite FK PracticeSession(facilityId, clubId) → Facility(id, clubId)
+  @@unique([id, clubId])
+}
+
+model FacilitySport {
+  facilityId String
+  sportId    String
+
+  facility Facility @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  sport    Sport    @relation(fields: [sportId], references: [id], onDelete: Restrict)
+
+  @@id([facilityId, sportId])
+  @@index([sportId])
+}
+
+/// An inventory line. A unique piece (ball machine #2) is quantity = 1;
+/// pooled stock (40 tennis balls) is quantity = 40. Bookings consume units.
+model Equipment {
+  id        String             @id @default(cuid())
+  clubId    String
+  name      String
+  category  String? // "Balls", "Cones", "Rackets", "Machines"
+  sku       String?
+  /// Total bookable units. CHECK (quantity >= 0).
+  quantity  Int                @default(1)
+  condition EquipmentCondition @default(GOOD)
+  isActive  Boolean            @default(true)
+  notes     String?
+  createdAt DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime           @updatedAt @db.Timestamptz(3)
+
+  club     Club               @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  bookings EquipmentBooking[]
+
+  @@unique([clubId, sku])
+  @@unique([id, clubId])
+  @@index([clubId, category])
+}
+
+/// Units of equipment reserved for a practice session.
+/// Over-allocation (sum of overlapping active bookings > Equipment.quantity)
+/// is rejected by the `equipment_booking_capacity_guard` trigger.
+model EquipmentBooking {
+  id          String                 @id @default(cuid())
+  clubId      String
+  equipmentId String
+  sessionId   String
+  quantity    Int                    @default(1)
+  /// Copied from the session (optionally widened for setup/teardown).
+  startsAt    DateTime               @db.Timestamptz(3)
+  endsAt      DateTime               @db.Timestamptz(3)
+  status      EquipmentBookingStatus @default(RESERVED)
+  createdAt   DateTime               @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime               @updatedAt @db.Timestamptz(3)
+
+  club      Club            @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  // Composite FKs guarantee equipment + session belong to the same club.
+  equipment Equipment       @relation(fields: [equipmentId, clubId], references: [id, clubId], onDelete: Cascade)
+  session   PracticeSession @relation(fields: [sessionId, clubId], references: [id, clubId], onDelete: Cascade)
+
+  @@unique([sessionId, equipmentId])
+  @@index([equipmentId, startsAt, endsAt])
+  @@index([clubId])
+}
+
+// =============================================================================
+// SCHEDULING
+// =============================================================================
+
+model PracticeSession {
+  id                   String        @id @default(cuid())
+  clubId               String
+  facilityId           String
+  coachId              String
+  sportId              String
+  ageGroupId           String?
+  createdById          String
+  title                String
+  description          String?
+  startsAt             DateTime      @db.Timestamptz(3)
+  endsAt               DateTime      @db.Timestamptz(3)
+  status               SessionStatus @default(SCHEDULED)
+  maxParticipants      Int?
+  /// Price per participant in minor units; 0 = free / included in membership.
+  priceAmount          Int           @default(0)
+  currency             String        @default("eur") @db.Char(3)
+  /// Coach's share of the post-platform-fee amount, in basis points (7000 = 70%).
+  coachShareBps        Int           @default(0)
+  cancellationPolicyId String?
+  /// Groups occurrences of a recurring session series.
+  seriesId             String?
+  cancelledAt          DateTime?     @db.Timestamptz(3)
+  cancelledById        String?
+  cancellationReason   String?
+  createdAt            DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime      @updatedAt @db.Timestamptz(3)
+
+  club               Club                @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  // Composite FK: the facility must belong to the same club as the session.
+  facility           Facility            @relation(fields: [facilityId, clubId], references: [id, clubId], onDelete: Restrict)
+  coach              User                @relation("SessionCoach", fields: [coachId], references: [id], onDelete: Restrict)
+  createdBy          User                @relation("SessionCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  cancelledBy        User?               @relation("SessionCanceller", fields: [cancelledById], references: [id], onDelete: SetNull)
+  sport              Sport               @relation(fields: [sportId], references: [id], onDelete: Restrict)
+  ageGroup           AgeGroup?           @relation(fields: [ageGroupId], references: [id], onDelete: SetNull)
+  cancellationPolicy CancellationPolicy? @relation(fields: [cancellationPolicyId], references: [id], onDelete: SetNull)
+
+  participants      SessionParticipant[]
+  attendances       Attendance[]
+  equipmentBookings EquipmentBooking[]
+  payments          PaymentTransaction[]
+  notifications     Notification[]
+
+  // CHECK (endsAt > startsAt), CHECK (coachShareBps BETWEEN 0 AND 10000),
+  // and EXCLUDE USING gist (facilityId WITH =, tstzrange(startsAt, endsAt) WITH &&)
+  //   WHERE (status <> 'CANCELLED')   ← the facility double-booking guard.
+  @@unique([id, clubId])
+  @@index([clubId, startsAt])
+  @@index([coachId, startsAt])
+  @@index([facilityId, startsAt])
+  @@index([seriesId])
+}
+
+model SessionParticipant {
+  id          String            @id @default(cuid())
+  sessionId   String
+  userId      String
+  status      ParticipantStatus @default(INVITED)
+  invitedById String?
+  invitedAt   DateTime          @default(now()) @db.Timestamptz(3)
+  respondedAt DateTime?         @db.Timestamptz(3)
+  cancelledAt DateTime?         @db.Timestamptz(3)
+  createdAt   DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime          @updatedAt @db.Timestamptz(3)
+
+  session    PracticeSession      @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user       User                 @relation("ParticipantUser", fields: [userId], references: [id], onDelete: Cascade)
+  invitedBy  User?                @relation("ParticipantInviter", fields: [invitedById], references: [id], onDelete: SetNull)
+  attendance Attendance?
+  payments   PaymentTransaction[]
+
+  @@unique([sessionId, userId])
+  @@index([userId, status])
+  @@index([sessionId, status])
+}
+
+model Attendance {
+  id                String           @id @default(cuid())
+  sessionId         String
+  participantId     String           @unique
+  userId            String
+  status            AttendanceStatus
+  checkedInAt       DateTime?        @db.Timestamptz(3)
+  markedById        String?
+  /// Coach → student feedback.
+  coachFeedback     String?
+  /// 1–5, CHECK in SQL migration.
+  performanceRating Int?
+  createdAt         DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime         @updatedAt @db.Timestamptz(3)
+
+  session     PracticeSession    @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  participant SessionParticipant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  user        User               @relation("AttendanceUser", fields: [userId], references: [id], onDelete: Cascade)
+  markedBy    User?              @relation("AttendanceMarker", fields: [markedById], references: [id], onDelete: SetNull)
+
+  @@unique([sessionId, userId])
+  @@index([userId, createdAt])
+}
+
+// =============================================================================
+// SOCIAL
+// =============================================================================
+
+model Post {
+  id           String         @id @default(cuid())
+  authorId     String
+  /// Set when posted on behalf of / inside a club.
+  clubId       String?
+  content      String?        @db.VarChar(5000)
+  visibility   PostVisibility @default(PUBLIC)
+  likeCount    Int            @default(0)
+  commentCount Int            @default(0)
+  createdAt    DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime       @updatedAt @db.Timestamptz(3)
+  deletedAt    DateTime?      @db.Timestamptz(3)
+
+  author        User           @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  club          Club?          @relation(fields: [clubId], references: [id], onDelete: SetNull)
+  media         PostMedia[]
+  comments      Comment[]
+  likes         Like[]
+  notifications Notification[]
+
+  @@index([authorId, createdAt(sort: Desc)])
+  @@index([clubId, createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
+}
+
+model PostMedia {
+  id         String    @id @default(cuid())
+  postId     String
+  type       MediaType
+  url        String
+  /// Storage key (S3/R2/UploadThing) for deletion.
+  storageKey String?
+  width      Int?
+  height     Int?
+  durationS  Int?
+  position   Int       @default(0)
+  altText    String?
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, position])
+}
+
+model Comment {
+  id        String    @id @default(cuid())
+  postId    String
+  authorId  String
+  /// Threaded replies (one level is enforced in the service layer).
+  parentId  String?
+  content   String    @db.VarChar(2000)
+  likeCount Int       @default(0)
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(3)
+  deletedAt DateTime? @db.Timestamptz(3)
+
+  post          Post           @relation(fields: [postId], references: [id], onDelete: Cascade)
+  author        User           @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  parent        Comment?       @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies       Comment[]      @relation("CommentReplies")
+  likes         Like[]
+  notifications Notification[]
+
+  @@index([postId, createdAt])
+  @@index([parentId])
+  @@index([authorId])
+}
+
+/// A like on exactly one of: a post or a comment.
+model Like {
+  id        String   @id @default(cuid())
+  userId    String
+  postId    String?
+  commentId String?
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post    Post?    @relation(fields: [postId], references: [id], onDelete: Cascade)
+  comment Comment? @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+  // NULLs are distinct in Postgres, so these behave as "one like per target".
+  // CHECK (num_nonnulls(postId, commentId) = 1) — see SQL migration.
+  @@unique([userId, postId])
+  @@unique([userId, commentId])
+  @@index([postId])
+  @@index([commentId])
+}
+
+// =============================================================================
+// MESSAGING  (direct + group chat; coaches ↔ students ↔ teammates)
+// =============================================================================
+
+model Conversation {
+  id            String           @id @default(cuid())
+  type          ConversationType
+  /// Group chats may be scoped to a club (e.g. "U14 squad").
+  clubId        String?
+  title         String?
+  /// For DIRECT chats: "<smallerUserId>:<largerUserId>", guarantees one DM per pair.
+  directKey     String?          @unique
+  createdById   String
+  lastMessageAt DateTime?        @db.Timestamptz(3)
+  createdAt     DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime         @updatedAt @db.Timestamptz(3)
+
+  club         Club?                     @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  createdBy    User                      @relation("ConversationCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  participants ConversationParticipant[]
+  messages     Message[]
+
+  @@index([clubId])
+  @@index([lastMessageAt(sort: Desc)])
+}
+
+model ConversationParticipant {
+  conversationId String
+  userId         String
+  isAdmin        Boolean   @default(false)
+  joinedAt       DateTime  @default(now()) @db.Timestamptz(3)
+  lastReadAt     DateTime? @db.Timestamptz(3)
+  mutedUntil     DateTime? @db.Timestamptz(3)
+  leftAt         DateTime? @db.Timestamptz(3)
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, userId])
+  @@index([userId])
+}
+
+model Message {
+  id             String    @id @default(cuid())
+  conversationId String
+  senderId       String
+  content        String    @db.VarChar(4000)
+  attachmentUrl  String?
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+  editedAt       DateTime? @db.Timestamptz(3)
+  deletedAt      DateTime? @db.Timestamptz(3)
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt(sort: Desc)])
+}
+
+// =============================================================================
+// BILLING  (Stripe Billing for SaaS + Stripe Connect for session payouts)
+// =============================================================================
+
+/// SaaS plan for a Club OR an independent Coach (exactly one owner).
+model Subscription {
+  id                   String             @id @default(cuid())
+  clubId               String?
+  userId               String?
+  tier                 SubscriptionTier
+  status               SubscriptionStatus
+  stripeCustomerId     String
+  stripeSubscriptionId String             @unique
+  stripePriceId        String
+  /// Platform take-rate applied to session payments while this plan is active.
+  platformFeeBps       Int                @default(1000)
+  currentPeriodStart   DateTime           @db.Timestamptz(3)
+  currentPeriodEnd     DateTime           @db.Timestamptz(3)
+  cancelAtPeriodEnd    Boolean            @default(false)
+  canceledAt           DateTime?          @db.Timestamptz(3)
+  trialEndsAt          DateTime?          @db.Timestamptz(3)
+  createdAt            DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime           @updatedAt @db.Timestamptz(3)
+
+  club Club? @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // CHECK (num_nonnulls(clubId, userId) = 1) + partial unique indexes allowing
+  // only one live (non-terminal) subscription per owner — see SQL migration.
+  @@index([clubId, status])
+  @@index([userId, status])
+}
+
+/// Stripe Connect connected account for a Club OR a Coach (exactly one owner).
+model StripeAccount {
+  id               String              @id @default(cuid())
+  clubId           String?             @unique
+  userId           String?             @unique
+  stripeAccountId  String              @unique // acct_...
+  type             StripeAccountType   @default(EXPRESS)
+  status           StripeAccountStatus @default(ONBOARDING)
+  country          String              @db.Char(2)
+  defaultCurrency  String              @db.Char(3)
+  chargesEnabled   Boolean             @default(false)
+  payoutsEnabled   Boolean             @default(false)
+  detailsSubmitted Boolean             @default(false)
+  /// Mirrors `account.requirements.currently_due` from Stripe webhooks.
+  requirementsDue  String[]            @default([])
+  disabledReason   String?
+  createdAt        DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime            @updatedAt @db.Timestamptz(3)
+
+  club      Club?             @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  user      User?             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transfers PaymentTransfer[]
+
+  // CHECK (num_nonnulls(clubId, userId) = 1) — see SQL migration.
+}
+
+/// One customer payment for one session seat (pay-per-session).
+///
+/// Money flow ("separate charges and transfers"):
+///   amount                        charged to the student
+///   − applicationFeeAmount        kept by the platform
+///   − stripeFeeAmount             Stripe processing (known after charge)
+///   = transferred to Club / Coach via PaymentTransfer rows
+model PaymentTransaction {
+  id                    String        @id @default(cuid())
+  clubId                String
+  sessionId             String
+  participantId         String
+  payerId               String
+  coachId               String?
+  amount                Int
+  currency              String        @db.Char(3)
+  applicationFeeAmount  Int           @default(0)
+  stripeFeeAmount       Int?
+  status                PaymentStatus @default(REQUIRES_PAYMENT_METHOD)
+  stripePaymentIntentId String        @unique
+  stripeChargeId        String?       @unique
+  /// Stripe `transfer_group`, ties the charge to its downstream transfers.
+  transferGroup         String
+  /// Client-supplied key so retried checkouts never double-charge.
+  idempotencyKey        String        @unique
+  failureCode           String?
+  failureMessage        String?
+  // Refunds
+  refundStatus          RefundStatus  @default(NONE)
+  refundedAmount        Int           @default(0)
+  refundReason          String?
+  /// Policy snapshot applied at refund time (rules can change later).
+  appliedRefundPercent  Int?
+  cancellationPolicyId  String?
+  // Chargebacks
+  disputeStatus         DisputeStatus @default(NONE)
+  stripeDisputeId       String?       @unique
+  disputedAmount        Int?
+  disputeReason         String?
+  paidAt                DateTime?     @db.Timestamptz(3)
+  refundedAt            DateTime?     @db.Timestamptz(3)
+  createdAt             DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime      @updatedAt @db.Timestamptz(3)
+
+  club               Club                @relation(fields: [clubId], references: [id], onDelete: Restrict)
+  session            PracticeSession     @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  participant        SessionParticipant  @relation(fields: [participantId], references: [id], onDelete: Restrict)
+  payer              User                @relation("PaymentPayer", fields: [payerId], references: [id], onDelete: Restrict)
+  coach              User?               @relation("PaymentCoach", fields: [coachId], references: [id], onDelete: SetNull)
+  cancellationPolicy CancellationPolicy? @relation(fields: [cancellationPolicyId], references: [id], onDelete: SetNull)
+  transfers          PaymentTransfer[]
+
+  // CHECKs: amount > 0, 0 <= applicationFeeAmount <= amount,
+  //         0 <= refundedAmount <= amount — see SQL migration.
+  @@index([clubId, createdAt])
+  @@index([sessionId])
+  @@index([participantId])
+  @@index([payerId, createdAt])
+  @@index([coachId, createdAt])
+  @@index([status])
+}
+
+/// A Stripe Transfer from the platform balance to a connected account
+/// (the club's share and, optionally, the coach's share of a payment).
+model PaymentTransfer {
+  id               String                @id @default(cuid())
+  paymentId        String
+  stripeAccountId  String // FK → StripeAccount.id
+  recipientType    TransferRecipientType
+  amount           Int
+  currency         String                @db.Char(3)
+  status           TransferStatus        @default(PENDING)
+  stripeTransferId String?               @unique // tr_...
+  reversedAmount   Int                   @default(0)
+  createdAt        DateTime              @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime              @updatedAt @db.Timestamptz(3)
+
+  payment       PaymentTransaction @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  stripeAccount StripeAccount      @relation(fields: [stripeAccountId], references: [id], onDelete: Restrict)
+
+  @@unique([paymentId, recipientType])
+  @@index([stripeAccountId, createdAt])
+}
+
+/// Club-defined refund rules applied automatically when a participant cancels.
+/// Rules are evaluated from the largest `minHoursBeforeStart` downward; the
+/// first rule whose threshold is met wins. No match ⇒ 0% refund.
+model CancellationPolicy {
+  id                           String   @id @default(cuid())
+  clubId                       String
+  name                         String // "Flexible", "Standard 24h", "Strict"
+  description                  String?
+  isDefault                    Boolean  @default(false)
+  /// Refund when the *club/coach* cancels the session (normally 100%).
+  organizerCancelRefundPercent Int      @default(100)
+  isActive                     Boolean  @default(true)
+  createdAt                    DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt                    DateTime @updatedAt @db.Timestamptz(3)
+
+  club     Club                     @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  rules    CancellationPolicyRule[]
+  sessions PracticeSession[]
+  payments PaymentTransaction[]
+
+  // Partial unique index: at most one default policy per club — see SQL migration.
+  @@unique([clubId, name])
+}
+
+model CancellationPolicyRule {
+  id                  String @id @default(cuid())
+  policyId            String
+  /// e.g. 48 → "cancelled ≥ 48h before start".
+  minHoursBeforeStart Int
+  /// 0–100
+  refundPercent       Int
+
+  policy CancellationPolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+
+  @@unique([policyId, minHoursBeforeStart])
+}
+
+/// Stripe webhook idempotency log: insert `event.id` first, skip if it exists.
+model StripeWebhookEvent {
+  id          String    @id // evt_...
+  type        String
+  livemode    Boolean
+  processedAt DateTime? @db.Timestamptz(3)
+  error       String?
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@index([type, createdAt])
+}
+
+// =============================================================================
+// NOTIFICATIONS
+// =============================================================================
+
+model Notification {
+  id          String           @id @default(cuid())
+  recipientId String
+  actorId     String?
+  type        NotificationType
+  title       String
+  body        String?
+  /// Deep link rendered by the client, e.g. "/sessions/clx...".
+  href        String?
+  /// Extra payload for the renderer (small, never secrets).
+  data        Json?
+  // Optional typed references so cascades clean up stale notifications.
+  clubId      String?
+  sessionId   String?
+  postId      String?
+  commentId   String?
+  readAt      DateTime?        @db.Timestamptz(3)
+  createdAt   DateTime         @default(now()) @db.Timestamptz(3)
+
+  recipient User             @relation("NotificationRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  actor     User?            @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
+  club      Club?            @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  session   PracticeSession? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  post      Post?            @relation(fields: [postId], references: [id], onDelete: Cascade)
+  comment   Comment?         @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  // Fast unread badge: partial index `WHERE readAt IS NULL` — see SQL migration.
+
+  @@index([recipientId, createdAt(sort: Desc)])
+}
