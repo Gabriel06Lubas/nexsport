@@ -27,12 +27,10 @@ npm run build      # production build
 ```
 
 The website runs without a database or `.env`. To sign in you also need the
-database and at least one OAuth provider. Create a `.env` with:
+database and at least one OAuth provider:
 
 ```bash
-DATABASE_URL="postgresql://postgres:postgres@localhost:5432/nexport"
-AUTH_SECRET="..."            # openssl rand -base64 33
-# plus AUTH_GOOGLE_* and/or AUTH_APPLE_* (see docs/step-2-auth.md)
+cp .env.example .env   # then set AUTH_SECRET and your Google and/or Apple keys
 ```
 
 Then:
