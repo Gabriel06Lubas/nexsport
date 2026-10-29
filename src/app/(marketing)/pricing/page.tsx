@@ -79,7 +79,7 @@ export default function PricingPage() {
                   </li>
                 ))}
               </ul>
-              <ButtonLink href="/contact" variant={t.featured ? "primary" : "outline"} className="mt-8">
+              <ButtonLink href={t.monthly === null ? "/contact" : "/login"} variant={t.featured ? "primary" : "outline"} className="mt-8">
                 {t.cta}
               </ButtonLink>
             </div>

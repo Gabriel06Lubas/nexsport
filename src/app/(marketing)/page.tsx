@@ -41,7 +41,7 @@ export default function HomePage() {
               business, coaches run their sessions, and athletes just show up and play.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
-              <ButtonLink href="/pricing" size="lg">
+              <ButtonLink href="/login" size="lg">
                 Get started free <ArrowRight />
               </ButtonLink>
               <ButtonLink href="/features" variant="outline" size="lg">

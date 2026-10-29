@@ -18,7 +18,7 @@ export function CtaBand({
             <p className="mt-4 max-w-xl text-lg opacity-75">{description}</p>
           </div>
           <div className="flex flex-wrap gap-3">
-            <ButtonLink href="/pricing" variant="accent" size="lg">
+            <ButtonLink href="/login" variant="accent" size="lg">
               Get started <ArrowRight />
             </ButtonLink>
             <ButtonLink href="/contact" size="lg" className="border border-current/25 bg-transparent text-ink-foreground hover:bg-ink-foreground/10">

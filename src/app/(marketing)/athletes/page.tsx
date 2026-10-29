@@ -24,7 +24,7 @@ export default function AthletesPage() {
         title="Your training, your team, your highlights."
         description="Say yes to a session in one tap, pay in the same step, chat with your squad, and keep a profile of the sports you love."
       >
-        <ButtonLink href="/pricing" size="lg">
+        <ButtonLink href="/login" size="lg">
           Join for free <ArrowRight />
         </ButtonLink>
       </PageHero>

@@ -11,7 +11,7 @@ Auth.js v5 (RBAC) · Tailwind + shadcn/ui · Stripe Billing + Stripe Connect
 | Step | Topic | Status |
 | --- | --- | --- |
 | 1 | [Database schema, booking guards](docs/step-1-database.md) | ✅ |
-| 2 | Auth.js v5 RBAC (JWT role + clubId, middleware) | ⏳ |
+| 2 | [OAuth sign-in (Google, Apple), sessions, RBAC](docs/step-2-auth.md) | ✅ |
 | 3 | Modular App Router + `modules/*` layout | ⏳ |
 | 4 | Scheduling service + Stripe Connect PaymentIntents | ⏳ |
 | — | [Marketing website](#marketing-website) | ✅ |
@@ -26,12 +26,17 @@ npm run dev        # http://localhost:3000
 npm run build      # production build
 ```
 
-The website runs without a database or `.env`. For the database layer:
+The website runs without a database or `.env`. To sign in you also need the
+database and at least one OAuth provider:
 
 ```bash
-cp .env.example .env   # point DATABASE_URL at PostgreSQL 14+
+cp .env.example .env   # set DATABASE_URL, AUTH_SECRET and Google and/or Apple keys
 npm run db:deploy      # apply migrations
+npm run dev            # then open http://localhost:3000/login
 ```
+
+See [docs/step-2-auth.md](docs/step-2-auth.md) for setting up the Google and
+Apple credentials.
 
 ## Marketing website
 

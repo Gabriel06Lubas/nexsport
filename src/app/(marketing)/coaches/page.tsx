@@ -29,7 +29,7 @@ export default function CoachesPage() {
         title="Spend your time coaching, not organising."
         description="Book courts and kit, fill your sessions, take attendance and get paid. Works for club coaches and independent coaches alike, and it's free to start."
       >
-        <ButtonLink href="/pricing" size="lg">
+        <ButtonLink href="/login" size="lg">
           Start free <ArrowRight />
         </ButtonLink>
         <ButtonLink href="/features#scheduling" variant="outline" size="lg">

@@ -53,12 +53,12 @@
 
 ### Two layers of roles
 - `User.role` (`SUPER_ADMIN | CLUB_OWNER | STAFF | COACH | STUDENT`) is the
-  platform-wide role. It goes into the Auth.js JWT and drives route-level RBAC
-  in the middleware (Step 2).
+  platform-wide role. It is exposed on the session and drives the dashboard
+  RBAC (see [Step 2](step-2-auth.md)).
 - `ClubMember.role` + `ClubMember.permissions[]` is the authority *inside one
   club*. A user can coach at Club A and be a student at Club B, or be STAFF and
   COACH in the same club (one row per role, `@@unique([clubId, userId, role])`).
-  `User.activeClubId` seeds `token.clubId`.
+  `User.activeClubId` is exposed on the session as `activeClubId`.
 
 ### Tenant isolation in the database
 Every tenant-owned table carries `clubId`. Where a row points at another

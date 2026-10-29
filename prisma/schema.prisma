@@ -270,10 +270,11 @@ model User {
   email            String    @unique
   emailVerified    DateTime? @db.Timestamptz(3)
   image            String?
-  /// bcrypt/argon2 hash; null for OAuth-only users.
-  passwordHash     String?
+  /// Sign-in is OAuth-only (Google, Apple), so no password is ever stored.
   role             UserRole  @default(STUDENT)
-  /// Club the user last worked in; seeds `token.clubId` on sign-in.
+  /// Set when the user finishes onboarding (role + profile handle).
+  onboardedAt      DateTime? @db.Timestamptz(3)
+  /// Club the user last worked in; exposed on the session as `activeClubId`.
   activeClubId     String?
   /// Stripe Customer used when this user pays for sessions / coach SaaS plan.
   stripeCustomerId String?   @unique
@@ -325,19 +326,15 @@ model User {
   @@index([role])
 }
 
+/// A linked OAuth identity (Google, Apple). Provider access/refresh tokens
+/// are deliberately NOT stored: nexport only needs the identity, and tokens
+/// that are never persisted can't leak.
 model Account {
   id                String   @id @default(cuid())
   userId            String
   type              String
   provider          String
   providerAccountId String
-  refresh_token     String?  @db.Text
-  access_token      String?  @db.Text
-  expires_at        Int?
-  token_type        String?
-  scope             String?
-  id_token          String?  @db.Text
-  session_state     String?
   createdAt         DateTime @default(now()) @db.Timestamptz(3)
   updatedAt         DateTime @updatedAt @db.Timestamptz(3)
 
@@ -347,27 +344,26 @@ model Account {
   @@index([userId])
 }
 
-/// Auth.js database session. nexport uses the JWT strategy (required for
-/// edge middleware RBAC), but the adapter still expects this table.
+/// Server-side login session (Auth.js "database" strategy). The browser only
+/// holds a random token in an httpOnly cookie; this table stores its SHA-256
+/// hash, so a database leak does not hand out live sessions.
+/// See src/modules/auth/adapter.ts and docs/step-2-auth.md.
 model Session {
-  id           String   @id @default(cuid())
-  sessionToken String   @unique
-  userId       String
-  expires      DateTime @db.Timestamptz(3)
-  createdAt    DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt    DateTime @updatedAt @db.Timestamptz(3)
+  id         String   @id @default(cuid())
+  tokenHash  String   @unique
+  userId     String
+  /// Idle expiry; pushed forward (at most daily) while the user is active.
+  expires    DateTime @db.Timestamptz(3)
+  /// Shown in "Your devices" so users can spot and revoke unknown sessions.
+  userAgent  String?  @db.VarChar(512)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  /// Approximate last activity (updated with `expires`).
+  lastSeenAt DateTime @default(now()) @db.Timestamptz(3)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
-}
-
-model VerificationToken {
-  identifier String
-  token      String
-  expires    DateTime @db.Timestamptz(3)
-
-  @@id([identifier, token])
+  @@index([expires])
 }
 
 model Profile {

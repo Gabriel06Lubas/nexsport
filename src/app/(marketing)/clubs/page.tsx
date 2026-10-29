@@ -21,7 +21,7 @@ export default function ClubsPage() {
         title="The whole club, on one screen."
         description="Revenue, members, courts, kit and people. See how the business is doing and run it day to day, without the spreadsheets."
       >
-        <ButtonLink href="/pricing" size="lg">
+        <ButtonLink href="/login" size="lg">
           Start a free trial <ArrowRight />
         </ButtonLink>
         <ButtonLink href="/contact" variant="outline" size="lg">
