@@ -8,7 +8,7 @@ import { redirect } from "next/navigation";
 import { db } from "@/db";
 import { session, user as userTable } from "@/db/schema";
 
-import { getCurrentSessionTokenHash, requireSignedInUser } from "./dal";
+import { assertNotImpersonating, getCurrentSessionTokenHash, requireSignedInUser } from "./dal";
 import {
   activeVerifyCodeFor,
   checkEmailCode,
@@ -106,7 +106,7 @@ export async function verifySignInCode(_prev: CodeFormState, formData: FormData)
   const now = new Date();
   await db.insert(userTable).values({ email, emailVerified: now }).onConflictDoNothing({ target: userTable.email });
   const [account] = await db.select().from(userTable).where(eq(userTable.email, email)).limit(1);
-  if (!account || account.deletedAt) {
+  if (!account || account.deletedAt || account.suspendedAt) {
     return { error: "This account can't sign in. Contact support if you think this is a mistake." };
   }
   if (!account.emailVerified) {
@@ -129,6 +129,7 @@ export async function verifySignInCode(_prev: CodeFormState, formData: FormData)
 
 export async function sendVerifyEmailCode(_prev: CodeFormState): Promise<CodeFormState> {
   const user = await requireSignedInUser();
+  await assertNotImpersonating();
   if (user.emailConfirmed) redirect("/dashboard");
   const result = await issueEmailCode({ purpose: "VERIFY_EMAIL", email: user.email.toLowerCase(), userId: user.id });
   if (!result.ok) return { error: issueError(result) };
@@ -137,6 +138,7 @@ export async function sendVerifyEmailCode(_prev: CodeFormState): Promise<CodeFor
 
 export async function confirmEmailCode(_prev: CodeFormState, formData: FormData): Promise<CodeFormState> {
   const user = await requireSignedInUser();
+  await assertNotImpersonating();
   if (user.emailConfirmed) redirect("/dashboard");
 
   const code = codeSchema.safeParse(formData.get("code"));

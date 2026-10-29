@@ -7,4 +7,5 @@ export * from "./scheduling";
 export * from "./social";
 export * from "./billing";
 export * from "./notifications";
+export * from "./admin";
 export * from "./relations";

@@ -48,10 +48,10 @@ enforced in a **Data Access Layer** next to the data.
 | `CLUB_OWNER`, `STAFF` | `/dashboard/club` | club |
 | `COACH` | `/dashboard/coach` | coach |
 | `STUDENT` | `/dashboard/athlete` | athlete |
-| `SUPER_ADMIN` | `/dashboard/club` | all |
+| `ADMIN` | `/admin` (see [admin.md](admin.md)) | all |
 
 During onboarding users can choose athlete, coach or club owner. `STAFF` is
-granted by a club and `SUPER_ADMIN` by the platform. Onboarding runs once:
+granted by a club, and `ADMIN` is only ever set directly in the database. Onboarding runs once:
 the update is conditional on `onboardedAt IS NULL`, so re-posting the form
 can't be used to switch roles.
 
@@ -240,8 +240,8 @@ at the mock server. They're ignored when `NODE_ENV=production`.
   by your proxy, not the client).
 - **Changing the account email.** Not supported yet; it would reuse the
   VERIFY_EMAIL code flow for the new address.
-- **Admin tooling** to grant `STAFF` / `SUPER_ADMIN` and suspend users. The
-  session layer already honours `deletedAt`.
+- **Granting `STAFF`** from a club's dashboard (admins and suspension are
+  covered in [admin.md](admin.md)).
 - **Account deletion** (GDPR self-service).
 - **Real Google/Apple sign-in.** It needs your credentials, so it hasn't been
   exercised here; the provider code paths have been tested against the mock

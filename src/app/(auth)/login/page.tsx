@@ -19,6 +19,7 @@ const errorMessages: Record<string, string> = {
   OAuthAccountNotLinked: "That account is already linked to a different nexport user.",
   Configuration: "Sign-in is temporarily unavailable. Please try again shortly.",
   Verification: "That sign-in link has expired. Please try again.",
+  Suspended: "This account has been suspended. Contact support if you think this is a mistake.",
 };
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;

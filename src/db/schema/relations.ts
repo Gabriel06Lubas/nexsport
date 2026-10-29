@@ -10,6 +10,7 @@ import {
   subscription,
 } from "./billing";
 import { ageGroup, club, clubMember, clubSport, coachAssignment, equipment, facility, facilitySport, sport } from "./clubs";
+import { adminAuditLog } from "./admin";
 import { notification } from "./notifications";
 import { attendance, equipmentBooking, practiceSession, sessionParticipant } from "./scheduling";
 import { comment, conversation, conversationParticipant, like, message, post, postMedia } from "./social";
@@ -305,6 +306,12 @@ export const cancellationPolicyRelations = relations(cancellationPolicy, ({ one,
 
 export const cancellationPolicyRuleRelations = relations(cancellationPolicyRule, ({ one }) => ({
   policy: one(cancellationPolicy, { fields: [cancellationPolicyRule.policyId], references: [cancellationPolicy.id] }),
+}));
+
+// ---- Administration -----------------------------------------------------------
+
+export const adminAuditLogRelations = relations(adminAuditLog, ({ one }) => ({
+  actor: one(user, { fields: [adminAuditLog.actorId], references: [user.id] }),
 }));
 
 // ---- Notifications ------------------------------------------------------------

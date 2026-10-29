@@ -14,6 +14,7 @@ Auth.js v5 (RBAC) · Tailwind + shadcn/ui · Stripe Billing + Stripe Connect
 | 2 | [Sign-in (Google, Apple, email code), email verification, sessions, RBAC](docs/step-2-auth.md) | ✅ |
 | 3 | Modular App Router + `modules/*` layout | ⏳ |
 | 4 | Scheduling service + Stripe Connect PaymentIntents | ⏳ |
+| — | [Admin dashboard](docs/admin.md): KPIs, tenants, plans, financials, logs, impersonation | ✅ |
 | — | [Marketing website](#marketing-website) | ✅ |
 
 ## Quick start
@@ -39,6 +40,7 @@ Then:
 ```bash
 npm run db:up          # terminal 1: local PostgreSQL on localhost:5432 (leave it running)
 npm run db:migrate     # terminal 2: create the tables
+npm run db:seed        # optional: demo clubs, coaches and payments (local only)
 npm run db:studio      # optional: browse the data in Drizzle Studio
 npm run dev            # then open http://localhost:3000/login
 ```

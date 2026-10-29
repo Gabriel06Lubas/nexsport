@@ -10,7 +10,7 @@ import { idSchema, plainText } from "@/lib/validation";
 import { account, profile, session, user as userTable } from "@/db/schema";
 
 import { signIn, signOut } from "./auth";
-import { getCurrentSessionTokenHash, requireUser } from "./dal";
+import { assertNotImpersonating, getCurrentSessionTokenHash, requireUser } from "./dal";
 import { safeCallbackUrl } from "./lib/redirects";
 import { homePathFor, selfAssignableRoles } from "./lib/roles";
 import { configuredProviderIds, type ProviderId } from "./providers";
@@ -20,6 +20,8 @@ import { configuredProviderIds, type ProviderId } from "./providers";
 
 export async function signInWithProvider(provider: ProviderId, callbackUrl?: string) {
   if (!configuredProviderIds().includes(provider)) redirect("/login?error=Configuration");
+  // Signed in already = linking a provider to this account: never as an impersonator.
+  await assertNotImpersonating();
   await signIn(provider, { redirectTo: safeCallbackUrl(callbackUrl) });
 }
 
@@ -30,6 +32,7 @@ export async function signOutAction() {
 /** Ends every session except the one making this request. */
 export async function signOutOtherDevices() {
   const user = await requireUser();
+  await assertNotImpersonating();
   const current = await getCurrentSessionTokenHash();
   await db
     .delete(session)
@@ -40,12 +43,14 @@ export async function signOutOtherDevices() {
 /** Ends every session, including this one. */
 export async function signOutEverywhere() {
   const user = await requireUser();
+  await assertNotImpersonating();
   await db.delete(session).where(eq(session.userId, user.id));
   redirect("/login?signedOut=all");
 }
 
 export async function revokeSession(formData: FormData) {
   const user = await requireUser();
+  await assertNotImpersonating();
   const sessionId = idSchema.parse(formData.get("sessionId"));
   // Scoped to the caller: a user can never revoke someone else's session.
   await db.delete(session).where(and(eq(session.id, sessionId), eq(session.userId, user.id)));
@@ -54,6 +59,7 @@ export async function revokeSession(formData: FormData) {
 
 export async function unlinkProvider(formData: FormData) {
   const user = await requireUser();
+  await assertNotImpersonating();
   const provider = z.enum(["google", "apple"]).parse(formData.get("provider"));
   const accounts = await db.select({ provider: account.provider }).from(account).where(eq(account.userId, user.id));
   // Never strand an account: with OAuth-only sign-in, the last linked
@@ -84,6 +90,7 @@ export type OnboardingState = {
 
 export async function completeOnboarding(_prev: OnboardingState, formData: FormData): Promise<OnboardingState> {
   const user = await requireUser();
+  await assertNotImpersonating();
   const raw = {
     role: String(formData.get("role") ?? ""),
     displayName: String(formData.get("displayName") ?? ""),
@@ -107,7 +114,8 @@ export async function completeOnboarding(_prev: OnboardingState, formData: FormD
       const updated = await tx
         .update(userTable)
         .set({ role, onboardedAt: new Date() })
-        .where(and(eq(userTable.id, user.id), isNull(userTable.onboardedAt)))
+        // Never for admins: onboarding must not be able to change their role.
+        .where(and(eq(userTable.id, user.id), isNull(userTable.onboardedAt), ne(userTable.role, "ADMIN")))
         .returning({ id: userTable.id });
       if (updated.length === 0) return;
       await tx.insert(profile).values({ userId: user.id, handle, displayName });

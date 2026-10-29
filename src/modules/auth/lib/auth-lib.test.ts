@@ -37,13 +37,14 @@ describe("roles", () => {
     expect(canAccessArea("COACH", "club")).toBe(false);
     expect(canAccessArea("COACH", "coach")).toBe(true);
     expect(canAccessArea("STUDENT", "coach")).toBe(false);
-    expect(canAccessArea("SUPER_ADMIN", "athlete")).toBe(true);
+    expect(canAccessArea("ADMIN", "athlete")).toBe(true);
   });
 
   it("sends each role to a home it can access", () => {
     expect(homePathFor("STAFF")).toBe("/dashboard/club");
     expect(homePathFor("COACH")).toBe("/dashboard/coach");
     expect(homePathFor("STUDENT")).toBe("/dashboard/athlete");
+    expect(homePathFor("ADMIN")).toBe("/admin");
   });
 });
 

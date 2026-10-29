@@ -4,7 +4,8 @@ import { pgEnum } from "drizzle-orm/pg-core";
 
 /** Platform-wide role, exposed on the session for coarse RBAC.
  *  Fine-grained, per-club authority lives in `ClubMember.role`. */
-export const userRole = pgEnum("UserRole", ["SUPER_ADMIN", "CLUB_OWNER", "STAFF", "COACH", "STUDENT"]);
+/** ADMIN runs the whole SaaS; admins are created directly in the database. */
+export const userRole = pgEnum("UserRole", ["ADMIN", "CLUB_OWNER", "STAFF", "COACH", "STUDENT"]);
 
 /** Why a one-time email code was sent. */
 export const emailCodePurpose = pgEnum("EmailCodePurpose", [
@@ -95,7 +96,11 @@ export const conversationType = pgEnum("ConversationType", ["DIRECT", "GROUP"]);
 
 // ---- Billing ----------------------------------------------------------------
 
-export const subscriptionTier = pgEnum("SubscriptionTier", ["FREE", "STARTER", "PRO", "ENTERPRISE"]);
+/** SaaS plans; prices, limits and Stripe Price IDs live in SubscriptionPlan. */
+export const subscriptionTier = pgEnum("SubscriptionTier", ["FREE_COACH", "PRO_COACH", "CLUB_BASIC", "CLUB_ENTERPRISE"]);
+
+/** Who a plan is sold to. */
+export const planAudience = pgEnum("PlanAudience", ["COACH", "CLUB"]);
 
 /** Mirrors Stripe's `subscription.status`. */
 export const subscriptionStatus = pgEnum("SubscriptionStatus", [
@@ -148,6 +153,17 @@ export const transferRecipientType = pgEnum("TransferRecipientType", ["CLUB", "C
 
 export const transferStatus = pgEnum("TransferStatus", ["PENDING", "PAID", "REVERSED", "FAILED"]);
 
+// ---- Administration ---------------------------------------------------------
+
+/** Actions recorded in AdminAuditLog. */
+export const adminAction = pgEnum("AdminAction", [
+  "PLAN_UPDATED",
+  "TENANT_SUSPENDED",
+  "TENANT_REACTIVATED",
+  "IMPERSONATION_STARTED",
+  "IMPERSONATION_ENDED",
+]);
+
 // ---- Notifications ----------------------------------------------------------
 
 export const notificationType = pgEnum("NotificationType", [
@@ -176,3 +192,4 @@ export const notificationType = pgEnum("NotificationType", [
 export type UserRole = (typeof userRole.enumValues)[number];
 export type ClubRole = (typeof clubRole.enumValues)[number];
 export type SessionStatus = (typeof sessionStatus.enumValues)[number];
+export type SubscriptionTier = (typeof subscriptionTier.enumValues)[number];

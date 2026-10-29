@@ -9,6 +9,7 @@ declare module "next-auth" {
     activeClubId?: string | null;
     onboardedAt?: Date | null;
     emailVerified?: Date | null;
+    suspendedAt?: Date | null;
   }
 
   interface Session {

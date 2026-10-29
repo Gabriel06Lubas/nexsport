@@ -5,7 +5,7 @@ import { signOutAction } from "../actions";
 import type { CurrentUser } from "../dal";
 
 const roleLabels: Record<CurrentUser["role"], string> = {
-  SUPER_ADMIN: "Admin",
+  ADMIN: "Admin",
   CLUB_OWNER: "Club owner",
   STAFF: "Staff",
   COACH: "Coach",

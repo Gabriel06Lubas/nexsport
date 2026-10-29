@@ -14,7 +14,7 @@ import {
   unlinkProvider,
 } from "@/modules/auth/actions";
 import { AppleIcon, GoogleIcon } from "@/modules/auth/components/provider-icons";
-import { getCurrentSessionTokenHash, requireUser } from "@/modules/auth/dal";
+import { getCurrentSessionTokenHash, getImpersonation, requireUser } from "@/modules/auth/dal";
 import { SESSION_ABSOLUTE_LIFETIME_SECONDS, SESSION_IDLE_TIMEOUT_SECONDS } from "@/modules/auth/lib/session-policy";
 import { describeUserAgent } from "@/modules/auth/lib/user-agent";
 import { configuredProviderIds, providerLabels, type ProviderId } from "@/modules/auth/providers";
@@ -36,6 +36,16 @@ type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 export default async function SecurityPage({ searchParams }: { searchParams: SearchParams }) {
   const user = await requireUser();
+  if (await getImpersonation()) {
+    return (
+      <div className="max-w-3xl">
+        <h1 className="text-3xl font-semibold tracking-tight">Security & devices</h1>
+        <p className="mt-4 rounded-xl bg-warning-soft p-4 text-sm text-warning">
+          Sign-in methods and devices can’t be viewed or changed while you are impersonating this account.
+        </p>
+      </div>
+    );
+  }
   const params = await searchParams;
   const [sessions, accounts, currentHash] = await Promise.all([
     db

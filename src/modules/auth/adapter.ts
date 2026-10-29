@@ -1,6 +1,7 @@
 import "server-only";
 
 import { and, eq, isNull, lt } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import type { Adapter, AdapterAccount, AdapterSession, AdapterUser } from "next-auth/adapters";
 
 import type { Db } from "@/db";
@@ -15,7 +16,11 @@ import { capExpiry, hashSessionToken, isPastAbsoluteLifetime } from "./lib/sessi
 //   * enforces an absolute session lifetime on top of the idle timeout;
 //   * records the device (user agent) so users can review and revoke sessions;
 //   * never persists provider access/refresh/id tokens: we only need identity;
-//   * treats soft-deleted users as non-existent.
+//   * treats soft-deleted users as non-existent and ends suspended users'
+//     sessions (sign-in itself is refused in the signIn callback);
+//   * re-checks impersonation sessions on every request: they die as soon as
+//     the impersonating admin is suspended, deleted or no longer an ADMIN,
+//     and they never slide past their fixed 1-hour expiry.
 
 type UserRow = typeof user.$inferSelect;
 
@@ -29,8 +34,11 @@ function toAdapterUser(row: UserRow): AdapterUser {
     role: row.role,
     activeClubId: row.activeClubId,
     onboardedAt: row.onboardedAt,
+    suspendedAt: row.suspendedAt,
   };
 }
+
+const impersonator = alias(user, "impersonator");
 
 async function currentUserAgent(): Promise<string | null> {
   try {
@@ -123,13 +131,17 @@ export function NexportAdapter(db: Db): Adapter {
 
     async getSessionAndUser(sessionToken) {
       const [row] = await db
-        .select({ session, user })
+        .select({ session, user, impersonator: { role: impersonator.role, suspendedAt: impersonator.suspendedAt, deletedAt: impersonator.deletedAt } })
         .from(session)
         .innerJoin(user, eq(session.userId, user.id))
+        .leftJoin(impersonator, eq(session.impersonatorId, impersonator.id))
         .where(eq(session.tokenHash, hashSessionToken(sessionToken)))
         .limit(1);
       if (!row) return null;
-      if (row.user.deletedAt || isPastAbsoluteLifetime(row.session.createdAt)) {
+      const impersonationRevoked =
+        row.session.impersonatorId !== null &&
+        (!row.impersonator || row.impersonator.role !== "ADMIN" || row.impersonator.suspendedAt || row.impersonator.deletedAt);
+      if (row.user.deletedAt || row.user.suspendedAt || impersonationRevoked || isPastAbsoluteLifetime(row.session.createdAt)) {
         await db.delete(session).where(eq(session.id, row.session.id));
         return null;
       }
@@ -146,7 +158,8 @@ export function NexportAdapter(db: Db): Adapter {
       const [row] = await db
         .update(session)
         .set({
-          ...(expires && { expires: capExpiry(expires, existing.createdAt) }),
+          // Impersonation sessions keep their fixed expiry; they never slide.
+          ...(expires && !existing.impersonatorId && { expires: capExpiry(expires, existing.createdAt) }),
           lastSeenAt: new Date(),
         })
         .where(eq(session.tokenHash, tokenHash))

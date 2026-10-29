@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 
 import { Logo } from "@/components/marketing/logo";
+import { ImpersonationBanner } from "@/modules/admin/components/impersonation-banner";
 import { UserMenu } from "@/modules/auth/components/user-menu";
 import { getCurrentUser } from "@/modules/auth/dal";
 
@@ -15,6 +16,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-dvh">
+      <ImpersonationBanner user={user} />
       <header className="sticky top-0 z-40 border-b border-border bg-background/85 backdrop-blur-md">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
           <Logo />

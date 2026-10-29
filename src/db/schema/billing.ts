@@ -7,6 +7,7 @@ import { club } from "./clubs";
 import {
   disputeStatus,
   paymentStatus,
+  planAudience,
   refundStatus,
   stripeAccountStatus,
   stripeAccountType,
@@ -33,6 +34,13 @@ export const subscription = pgTable(
     stripeCustomerId: text().notNull(),
     stripeSubscriptionId: text().notNull(),
     stripePriceId: text().notNull(),
+    /**
+     * What this customer pays per month, in minor units: a snapshot taken when
+     * the subscription starts or changes (Stripe webhook), so editing a plan's
+     * list price never rewrites existing customers' MRR.
+     */
+    monthlyAmount: integer().notNull().default(0),
+    currency: char({ length: 3 }).notNull().default("eur"),
     /** Platform take-rate applied to session payments while this plan is active. */
     platformFeeBps: integer().notNull().default(1000),
     currentPeriodStart: tstz().notNull(),
@@ -59,6 +67,47 @@ export const subscription = pgTable(
     check("Subscription_exactly_one_owner", sql`num_nonnulls("clubId", "userId") = 1`),
     check("Subscription_fee_bps", sql`"platformFeeBps" BETWEEN 0 AND 10000`),
     check("Subscription_period_order", sql`"currentPeriodEnd" >= "currentPeriodStart"`),
+    check("Subscription_monthly_amount_non_negative", sql`"monthlyAmount" >= 0`),
+    check("Subscription_currency_format", sql`"currency" ~ '^[a-z]{3}$'`),
+  ],
+);
+
+/**
+ * The SaaS plan catalogue, edited by admins in /admin/subscriptions. One row
+ * per tier (seeded by migration 0004). Limits are nullable: null = unlimited.
+ */
+export const subscriptionPlan = pgTable(
+  "SubscriptionPlan",
+  {
+    tier: subscriptionTier().primaryKey(),
+    name: text().notNull(),
+    audience: planAudience().notNull(),
+    /** List price per month in minor units (cents). */
+    monthlyPriceAmount: integer().notNull(),
+    currency: char({ length: 3 }).notNull().default("eur"),
+    /** Platform fee on pay-per-session bookings (300 = 3%). */
+    platformFeeBps: integer().notNull(),
+    /** Stripe Price for this plan (price_…); null for free plans. */
+    stripePriceId: text(),
+    maxFacilities: integer(),
+    maxStaff: integer(),
+    maxAthletes: integer(),
+    isActive: boolean().notNull().default(true),
+    updatedAt: updatedAt(),
+    updatedById: text(),
+  },
+  (t) => [
+    uniq("SubscriptionPlan", t.stripePriceId),
+    fk("SubscriptionPlan", [t.updatedById], [user.id]).onDelete("set null"),
+    check("SubscriptionPlan_price_non_negative", sql`"monthlyPriceAmount" >= 0`),
+    check("SubscriptionPlan_fee_bps", sql`"platformFeeBps" BETWEEN 0 AND 10000`),
+    check("SubscriptionPlan_currency_format", sql`"currency" ~ '^[a-z]{3}$'`),
+    check("SubscriptionPlan_stripe_price_format", sql`"stripePriceId" IS NULL OR "stripePriceId" ~ '^price_[A-Za-z0-9]{8,64}$'`),
+    check(
+      "SubscriptionPlan_limits_positive",
+      sql`("maxFacilities" IS NULL OR "maxFacilities" >= 0) AND ("maxStaff" IS NULL OR "maxStaff" >= 0) AND ("maxAthletes" IS NULL OR "maxAthletes" >= 0)`,
+    ),
+    check("SubscriptionPlan_paid_has_price", sql`"monthlyPriceAmount" = 0 OR "stripePriceId" IS NOT NULL OR NOT "isActive"`),
   ],
 );
 

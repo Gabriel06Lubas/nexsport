@@ -9,7 +9,7 @@ export const metadata: Metadata = { title: "Welcome" };
 
 export default async function OnboardingPage() {
   const user = await requireUser();
-  if (user.onboarded) redirect(homePathFor(user.role));
+  if (user.onboarded || user.role === "ADMIN") redirect(homePathFor(user.role));
 
   return (
     <div className="mx-auto max-w-2xl">

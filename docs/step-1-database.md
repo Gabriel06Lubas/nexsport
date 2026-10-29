@@ -56,7 +56,7 @@
 ## Key design decisions
 
 ### Two layers of roles
-- `User.role` (`SUPER_ADMIN | CLUB_OWNER | STAFF | COACH | STUDENT`) is the
+- `User.role` (`ADMIN | CLUB_OWNER | STAFF | COACH | STUDENT`) is the
   platform-wide role. It is exposed on the session and drives the dashboard
   RBAC (see [Step 2](step-2-auth.md)).
 - `ClubMember.role` + `ClubMember.permissions[]` is the authority *inside one

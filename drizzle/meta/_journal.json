@@ -22,6 +22,20 @@
       "when": 1793312481308,
       "tag": "0002_email_codes",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793314229303,
+      "tag": "0003_admin",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793314252240,
+      "tag": "0004_seed_subscription_plans",
+      "breakpoints": true
     }
   ]
 }

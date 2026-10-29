@@ -1,8 +1,13 @@
 import "server-only";
 
+import { and, eq, isNotNull } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { cache } from "react";
+
+import { db } from "@/db";
+import { session, user } from "@/db/schema";
 
 import { auth } from "./auth";
 import { hashSessionToken } from "./lib/session-policy";
@@ -61,3 +66,41 @@ export const getCurrentSessionTokenHash = cache(async () => {
   }
   return null;
 });
+
+// ---------------------------------------------------------------------------
+// Admin
+// ---------------------------------------------------------------------------
+
+const impersonator = alias(user, "impersonator");
+
+/** If this request runs inside an impersonation session: who is impersonating. */
+export const getImpersonation = cache(async () => {
+  const tokenHash = await getCurrentSessionTokenHash();
+  if (!tokenHash) return null;
+  const [row] = await db
+    .select({ adminId: impersonator.id, adminEmail: impersonator.email, userId: session.userId, expires: session.expires })
+    .from(session)
+    .innerJoin(impersonator, eq(session.impersonatorId, impersonator.id))
+    .where(and(eq(session.tokenHash, tokenHash), isNotNull(session.impersonatorId)))
+    .limit(1);
+  return row ?? null;
+});
+
+/**
+ * The admin area's gate. Anyone else (including an admin who is currently
+ * impersonating someone) gets a plain 404, so the area doesn't reveal itself.
+ */
+export async function requireAdmin(): Promise<CurrentUser> {
+  const current = await requireUser();
+  if (current.role !== "ADMIN" || (await getImpersonation())) notFound();
+  return current;
+}
+
+/**
+ * For actions that change how someone signs in or who they are (linking
+ * providers, revoking sessions, onboarding, email codes): not allowed while
+ * an admin is impersonating the account.
+ */
+export async function assertNotImpersonating(): Promise<void> {
+  if (await getImpersonation()) redirect("/dashboard");
+}

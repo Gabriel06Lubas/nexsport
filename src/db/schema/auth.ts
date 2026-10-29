@@ -29,6 +29,9 @@ export const user = pgTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
     deletedAt: tstz(),
+    /** Set by an admin: sessions are revoked and sign-in is refused. */
+    suspendedAt: tstz(),
+    suspensionReason: varchar({ length: 500 }),
   },
   // Annotated: User and Club reference each other, which would otherwise
   // make TypeScript give up inferring either table's type.
@@ -82,12 +85,18 @@ export const session = pgTable(
     createdAt: createdAt(),
     /** Approximate last activity (updated with `expires`). */
     lastSeenAt: tstz().notNull().defaultNow(),
+    /**
+     * Set when an admin is impersonating `userId`. Such sessions have a hard
+     * 1-hour lifetime, never slide, and die if the admin loses the role.
+     */
+    impersonatorId: text(),
   },
   (t) => [
     uniq("Session", t.tokenHash),
     idx("Session", t.userId),
     idx("Session", t.expires),
     fk("Session", [t.userId], [user.id]).onDelete("cascade"),
+    fk("Session", [t.impersonatorId], [user.id]).onDelete("cascade"),
     // Tokens are stored as lowercase hex SHA-256 digests, never raw.
     check("Session_tokenHash_sha256", sql`"tokenHash" ~ '^[0-9a-f]{64}$'`),
   ],

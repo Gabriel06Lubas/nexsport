@@ -62,7 +62,7 @@ export const club = pgTable(
   ],
 );
 
-/** Global sport catalogue (managed by SUPER_ADMIN). Clubs opt in via ClubSport. */
+/** Global sport catalogue (managed by ADMIN). Clubs opt in via ClubSport. */
 export const sport = pgTable(
   "Sport",
   {

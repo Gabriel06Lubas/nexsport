@@ -49,11 +49,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth(async (): Promise<Ne
     useSecureCookies: useSecureCookies(),
     ...(isAppleConfigured() && { cookies: { callbackUrl: appleCallbackUrlCookie } }),
     callbacks: {
-      signIn({ account, profile }) {
+      signIn({ account, profile, user }) {
         // Only our OpenID Connect providers, and only identities whose email
         // the provider has verified. This is what makes linking Google and
         // Apple accounts by email safe.
         if (account?.type !== "oidc") return false;
+        // Accounts suspended by an admin can't sign in.
+        if (user?.suspendedAt) return "/login?error=Suspended";
         return isEmailVerified(profile?.email_verified);
       },
       session({ session, user }) {
