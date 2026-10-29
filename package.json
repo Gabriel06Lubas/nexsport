@@ -15,6 +15,7 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
+    "db:up": "node scripts/local-postgres.mjs",
     "db:studio": "prisma studio",
     "db:test": "psql \"${DATABASE_URL%%\\?*}\" -v ON_ERROR_STOP=1 -q -f prisma/tests/booking_guards.test.sql && prisma/tests/booking_races.sh",
     "typecheck": "tsc --noEmit"
