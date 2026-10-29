@@ -11,7 +11,7 @@ Auth.js v5 (RBAC) · Tailwind + shadcn/ui · Stripe Billing + Stripe Connect
 | Step | Topic | Status |
 | --- | --- | --- |
 | 1 | [Database schema, booking guards](docs/step-1-database.md) | ✅ |
-| 2 | [OAuth sign-in (Google, Apple), sessions, RBAC](docs/step-2-auth.md) | ✅ |
+| 2 | [Sign-in (Google, Apple, email code), email verification, sessions, RBAC](docs/step-2-auth.md) | ✅ |
 | 3 | Modular App Router + `modules/*` layout | ⏳ |
 | 4 | Scheduling service + Stripe Connect PaymentIntents | ⏳ |
 | — | [Marketing website](#marketing-website) | ✅ |
@@ -30,7 +30,8 @@ The website runs without a database or `.env`. To sign in you also need the
 database and at least one OAuth provider:
 
 ```bash
-cp .env.example .env   # then set AUTH_SECRET and your Google and/or Apple keys
+cp .env.example .env   # then set AUTH_SECRET (Google/Apple keys and SMTP are optional in dev:
+                       # "Continue with email" prints its codes in the `npm run dev` terminal)
 ```
 
 Then:

@@ -7,7 +7,7 @@ import { NextResponse, type NextRequest } from "next/server";
 // Per Next.js guidance, no database access happens in the proxy.
 
 const SESSION_COOKIES = ["__Secure-authjs.session-token", "authjs.session-token"];
-const PROTECTED_PREFIXES = ["/dashboard", "/onboarding"];
+const PROTECTED_PREFIXES = ["/dashboard", "/onboarding", "/verify-email"];
 
 export function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
@@ -23,5 +23,5 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/onboarding"],
+  matcher: ["/dashboard/:path*", "/onboarding", "/verify-email"],
 };

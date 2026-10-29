@@ -1,6 +1,7 @@
-// End-to-end test of sign-in, sessions and RBAC against a real browser,
-// the real Next.js app and Postgres, with Google and Apple replaced by a
-// local mock OpenID Connect server.
+// End-to-end test of sign-in, email codes, sessions and RBAC against a real
+// browser, the real Next.js app and Postgres, with Google and Apple replaced
+// by a local mock OpenID Connect server and email delivered to a local SMTP
+// server that the test reads codes from.
 //
 //   DATABASE_URL=postgresql://... npm run test:e2e
 //
@@ -13,6 +14,7 @@ import { exportPKCS8, generateKeyPair } from "jose";
 import { OAuth2Server } from "oauth2-mock-server";
 import pg from "pg";
 import { chromium } from "playwright";
+import { SMTPServer } from "smtp-server";
 
 const APP = "http://localhost:3300";
 const ISSUER = "http://localhost:4555";
@@ -52,6 +54,33 @@ idp.service.on("beforeAuthorizeRedirect", (redirect) => {
 });
 const as = (claims) => (identity = { email_verified: true, ...claims });
 
+// --- Mailbox: a local SMTP server that keeps every message ------------------
+const inbox = [];
+const smtp = new SMTPServer({
+  authOptional: true,
+  disabledCommands: ["STARTTLS", "AUTH"],
+  onData(stream, session, done) {
+    let raw = "";
+    stream.on("data", (chunk) => (raw += chunk));
+    stream.on("end", () => {
+      inbox.push({ to: session.envelope.rcptTo.map((r) => r.address.toLowerCase()), raw });
+      done();
+    });
+  },
+});
+await new Promise((r) => smtp.listen(2525, "127.0.0.1", r));
+const mailsTo = (address) => inbox.filter((m) => m.to.includes(address));
+/** Waits for message number `n` (1-based) to `address` and returns its code. */
+async function codeFor(address, n) {
+  for (let i = 0; i < 100; i++) {
+    const mail = mailsTo(address)[n - 1];
+    const subject = mail?.raw.match(/^Subject: (\d{3}) (\d{3}) is your nexport code/m);
+    if (subject) return subject[1] + subject[2];
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error(`no email #${n} for ${address}`);
+}
+
 // --- Cross-site form_post relay (stands in for appleid.apple.com) ----------
 const relay = http.createServer((req, res) => {
   const url = new URL(req.url, CROSS_SITE);
@@ -80,6 +109,9 @@ const app = spawn("npx", ["next", "dev", "-p", "3300"], {
     AUTH_APPLE_KEY_ID: "KEY1234567",
     AUTH_APPLE_PRIVATE_KEY: (await exportPKCS8(privateKey)).replace(/\n/g, "\\n"),
     AUTH_APPLE_ISSUER: ISSUER,
+    SMTP_HOST: "127.0.0.1",
+    SMTP_PORT: "2525",
+    EMAIL_FROM: "nexport <no-reply@e2e.test>",
   },
   stdio: ["ignore", "pipe", "pipe"],
   detached: true, // own process group, so the whole npx → next tree can be stopped
@@ -97,7 +129,10 @@ for (let i = 0; ; i++) {
 
 const db = new pg.Client({ connectionString: DATABASE_URL });
 await db.connect();
-const cleanup = () => db.query(`DELETE FROM "User" WHERE email LIKE '%@e2e.test'`);
+const cleanup = async () => {
+  await db.query(`DELETE FROM "User" WHERE email LIKE '%@e2e.test'`);
+  await db.query(`DELETE FROM "EmailCode" WHERE email LIKE '%@e2e.test'`);
+};
 await cleanup();
 
 const browser = await chromium.launch();
@@ -122,6 +157,26 @@ async function signIn(context, provider) {
   return page;
 }
 
+/** "Continue with email" on /login; fails with the page's message if no code page follows. */
+async function requestEmailCode(page, address) {
+  await page.getByPlaceholder("you@example.com").fill(address);
+  await page.getByRole("button", { name: "Continue with email" }).click();
+  try {
+    await page.waitForURL((u) => u.pathname === "/login/verify", { timeout: 15000 });
+  } catch {
+    const message = await page.getByRole("alert").first().textContent().catch(() => "(no message)");
+    throw new Error(`requesting a code for ${address} failed: ${message}`);
+  }
+}
+
+/** On /verify-email, enter the newest emailed code and continue. */
+async function confirmEmail(page, address) {
+  const code = await codeFor(address, mailsTo(address).length || 1);
+  await page.getByLabel("6-digit code").fill(code);
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.waitForURL((u) => !["/verify-email", "/dashboard"].includes(u.pathname));
+}
+
 const sessionCookie = async (context) => (await context.cookies(APP)).find((c) => c.name.endsWith("authjs.session-token"));
 
 try {
@@ -136,7 +191,25 @@ try {
   as({ sub: "google-sub-1", email: "Maria@E2E.test", name: "María Coach" });
   const laptop = await browser.newContext({ userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15" });
   const page = await signIn(laptop, "google");
-  check(new URL(page.url()).pathname === "/onboarding", "first Google sign-in lands on onboarding");
+  check(new URL(page.url()).pathname === "/verify-email", "first Google sign-in lands on 'Confirm your email'");
+  await shot(page, "2-verify-email");
+  const signupCode = await codeFor("maria@e2e.test", 1);
+  check(/^\d{6}$/.test(signupCode), "a 6-digit code was emailed automatically on sign-up");
+  const { rows: codeRows } = await db.query(`SELECT "codeHash", "userId" IS NOT NULL AS bound FROM "EmailCode" WHERE email = 'maria@e2e.test'`);
+  check(codeRows.length === 1 && /^[0-9a-f]{64}$/.test(codeRows[0].codeHash) && !codeRows[0].codeHash.includes(signupCode) && codeRows[0].bound, "DB stores only an HMAC of the code, bound to the user");
+  await page.goto(`${APP}/dashboard`);
+  check(new URL(page.url()).pathname === "/verify-email", "the app stays locked until the email is confirmed");
+  await page.getByLabel("6-digit code").fill("' OR '1'='1");
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByText("Enter the 6-digit code").waitFor();
+  const { rows: afterInjection } = await db.query(`SELECT attempts FROM "EmailCode" WHERE email = 'maria@e2e.test'`);
+  check(afterInjection[0].attempts === 0, "SQL-injection text in the code box is rejected before touching the database");
+  await page.getByLabel("6-digit code").fill(signupCode === "000000" ? "111111" : "000000");
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByText("That code isn't right. 4 attempts left.").waitFor();
+  check(true, "a wrong code is refused and the remaining attempts are shown");
+  await confirmEmail(page, "maria@e2e.test");
+  check(new URL(page.url()).pathname === "/onboarding", "the right code confirms the email and continues to onboarding");
   await shot(page, "2-onboarding");
   await page.getByText("Coach", { exact: true }).click();
   await page.getByLabel("Profile handle").fill("maria.coach");
@@ -187,6 +260,9 @@ try {
   as({ sub: "google-sub-3", email: "second@e2e.test", name: "Second User" });
   const second = await browser.newContext();
   const secondPage = await signIn(second, "google");
+  await confirmEmail(secondPage, "second@e2e.test");
+  const sqlName = `Robert'); DROP TABLE "User";--`;
+  await secondPage.getByLabel("Display name").fill(sqlName);
   await secondPage.getByLabel("Profile handle").fill("maria.coach");
   await secondPage.getByRole("button", { name: "Continue" }).click();
   await secondPage.getByText("That handle is taken").waitFor();
@@ -195,6 +271,8 @@ try {
   await secondPage.getByRole("button", { name: "Continue" }).click();
   await secondPage.waitForURL(`${APP}/dashboard/athlete`);
   check(true, "a free handle then completes onboarding (athlete by default)");
+  const { rows: stored } = await db.query(`SELECT "displayName" FROM "Profile" WHERE handle = 'second.user'`);
+  check(stored[0]?.displayName === sqlName && (await db.query(`SELECT to_regclass('public."User"') IS NOT NULL AS ok`)).rows[0].ok, "an SQL payload as display name is stored as plain text; nothing is executed");
 
   // 6. Devices page lists both sessions; revoking one kills it immediately.
   await page.goto(`${APP}/dashboard/settings/security`);
@@ -250,6 +328,68 @@ try {
   await s.getByRole("listitem").filter({ hasText: "Apple" }).getByRole("button", { name: "Disconnect" }).click();
   await s.waitForURL(/unlinked=1/);
   check(await s.getByRole("listitem").filter({ hasText: "Google" }).getByRole("button", { name: "Disconnect" }).isDisabled(), "last sign-in method's Disconnect is disabled");
+
+  // 12. "Continue with email": sign-up with a code, no password.
+  const emailUser = await browser.newContext();
+  const ep = await emailUser.newPage();
+  await ep.goto(`${APP}/login`);
+  await shot(ep, "5-login-email");
+  await requestEmailCode(ep, "Newbie@E2E.test");
+  check(!(await db.query(`SELECT 1 FROM "User" WHERE email = 'newbie@e2e.test'`)).rowCount, "requesting a code creates no account yet");
+  const pendingCookie = (await emailUser.cookies(APP)).find((c) => c.name.endsWith("nexport.email-sign-in"));
+  check(pendingCookie?.httpOnly && pendingCookie.sameSite === "Lax", "the pending sign-in is bound to this browser by an httpOnly cookie");
+  await shot(ep, "6-enter-code");
+  const elsewhere = await (await browser.newContext()).newPage();
+  await elsewhere.goto(`${APP}/login/verify`);
+  check(new URL(elsewhere.url()).pathname === "/login", "the code page is useless in another browser");
+  await ep.getByLabel("6-digit code").fill(await codeFor("newbie@e2e.test", 1));
+  await ep.getByRole("button", { name: "Continue" }).click();
+  await ep.waitForURL((u) => u.pathname === "/onboarding");
+  const { rows: newbie } = await db.query(`SELECT "emailVerified" FROM "User" WHERE email = 'newbie@e2e.test'`);
+  check(newbie.length === 1 && newbie[0].emailVerified, "the code creates the account with a confirmed email and signs in → onboarding");
+  check(Boolean(await sessionCookie(emailUser)), "email sign-in sets the same kind of session cookie as Google/Apple");
+
+  // 13. Cooldown and brute force on one pending code.
+  const attacker = await (await browser.newContext()).newPage();
+  await attacker.goto(`${APP}/login`);
+  await requestEmailCode(attacker, "target@e2e.test");
+  await attacker.getByRole("button", { name: "Send a new code" }).click();
+  await attacker.getByText(/Please wait \d+ seconds/).waitFor();
+  check(true, "asking for another code right away is refused (cooldown)");
+  const realCode = await codeFor("target@e2e.test", 1);
+  const wrong = realCode === "123456" ? "654321" : "123456";
+  for (let i = 0; i < 5; i++) {
+    await attacker.getByLabel("6-digit code").fill(wrong);
+    await attacker.getByRole("button", { name: "Continue" }).click();
+    await attacker.getByText(i < 4 ? `${4 - i} attempt` : "expired or was tried too many times").first().waitFor();
+  }
+  await attacker.getByLabel("6-digit code").fill(realCode);
+  await attacker.getByRole("button", { name: "Continue" }).click();
+  await attacker.getByText("expired or was tried too many times").first().waitFor();
+  check(!(await db.query(`SELECT 1 FROM "User" WHERE email = 'target@e2e.test'`)).rowCount, "after 5 wrong guesses even the right code no longer works");
+
+  // 14. Email sign-in to an existing Google account's address → same account.
+  // Maria's sign-up code is seconds old; let the 60-second cooldown pass.
+  await db.query(`UPDATE "EmailCode" SET "createdAt" = now() - interval '2 minutes' WHERE email = 'maria@e2e.test'`);
+  const viaEmail = await (await browser.newContext()).newPage();
+  await viaEmail.goto(`${APP}/login`);
+  await requestEmailCode(viaEmail, "maria@e2e.test");
+  await viaEmail.getByLabel("6-digit code").fill(await codeFor("maria@e2e.test", 2));
+  await viaEmail.getByRole("button", { name: "Continue" }).click();
+  await viaEmail.waitForURL((u) => u.pathname === "/dashboard/coach");
+  check(Number((await db.query(`SELECT count(*) FROM "User" WHERE email = 'maria@e2e.test'`)).rows[0].count) === 1, "email sign-in with an existing address opens that same account");
+
+  // 15. Malicious text in the email box: rejected, nothing stored or run.
+  const mal = await (await browser.newContext()).newPage();
+  await mal.goto(`${APP}/login`);
+  for (const payload of [`' OR 1=1 --@e2e.test`, `"<img src=x onerror=window.__xss=1>"@e2e.test`, `a@e2e.test'; DROP TABLE "EmailCode";--`]) {
+    await mal.getByPlaceholder("you@example.com").fill(payload);
+    await mal.getByRole("button", { name: "Continue with email" }).click();
+    await mal.getByText("Enter a valid email address").waitFor();
+  }
+  check(!(await mal.evaluate(() => window.__xss)), "an HTML/JS payload in the email box is shown as text, never run");
+  check((await db.query(`SELECT to_regclass('public."EmailCode"') IS NOT NULL AS ok`)).rows[0].ok && !(await db.query(`SELECT 1 FROM "EmailCode" WHERE email LIKE '%drop%' OR email LIKE '%or 1=1%'`)).rowCount, "SQL payloads in the email box are rejected; no rows, no damage");
+
   check(consoleErrors.length === 0, `no browser console errors or warnings${consoleErrors.length ? `:\n  ${[...new Set(consoleErrors)].join("\n  ")}` : ""}`);
 } catch (e) {
   failures++;
@@ -262,6 +402,7 @@ try {
   await browser.close();
   process.kill(-app.pid, "SIGTERM");
   relay.close();
+  smtp.close();
   await idp.stop();
 }
 

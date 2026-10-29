@@ -1,6 +1,6 @@
 import { relations } from "drizzle-orm";
 
-import { account, follow, profile, profileSport, session, user } from "./auth";
+import { account, emailCode, follow, profile, profileSport, session, user } from "./auth";
 import {
   cancellationPolicy,
   cancellationPolicyRule,
@@ -23,6 +23,7 @@ import { comment, conversation, conversationParticipant, like, message, post, po
 export const userRelations = relations(user, ({ one, many }) => ({
   accounts: many(account),
   sessions: many(session),
+  emailCodes: many(emailCode),
   profile: one(profile),
   followers: many(follow, { relationName: "following" }),
   following: many(follow, { relationName: "follower" }),
@@ -52,6 +53,10 @@ export const userRelations = relations(user, ({ one, many }) => ({
 
 export const accountRelations = relations(account, ({ one }) => ({
   user: one(user, { fields: [account.userId], references: [user.id] }),
+}));
+
+export const emailCodeRelations = relations(emailCode, ({ one }) => ({
+  user: one(user, { fields: [emailCode.userId], references: [user.id] }),
 }));
 
 export const sessionRelations = relations(session, ({ one }) => ({

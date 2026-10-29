@@ -5,8 +5,10 @@ import NextAuth, { type NextAuthConfig } from "next-auth";
 import { db } from "@/db";
 
 import { NexportAdapter } from "./adapter";
+import { issueEmailCode } from "./email-code";
 import { SESSION_IDLE_TIMEOUT_SECONDS, SESSION_UPDATE_AGE_SECONDS } from "./lib/session-policy";
 import { buildProviders, isAppleConfigured } from "./providers";
+import { useSecureCookies } from "./session-cookie";
 
 // Apple returns users with a cross-site POST (response_mode=form_post), and
 // browsers don't send SameSite=Lax cookies on cross-site POSTs. Auth.js
@@ -42,6 +44,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth(async (): Promise<Ne
       updateAge: SESSION_UPDATE_AGE_SECONDS,
     },
     pages: { signIn: "/login", error: "/login" },
+    // Explicit, so sessions started by email-code sign-in (session-cookie.ts)
+    // use exactly the same cookie name as Auth.js.
+    useSecureCookies: useSecureCookies(),
     ...(isAppleConfigured() && { cookies: { callbackUrl: appleCallbackUrlCookie } }),
     callbacks: {
       signIn({ account, profile }) {
@@ -64,8 +69,22 @@ export const { handlers, auth, signIn, signOut } = NextAuth(async (): Promise<Ne
             role: user.role ?? "STUDENT",
             activeClubId: user.activeClubId ?? null,
             onboarded: Boolean(user.onboardedAt),
+            // Confirmed with a code we emailed (email sign-in or the step after
+            // a Google/Apple sign-up). Required by requireUser() in the DAL.
+            emailConfirmed: Boolean(user.emailVerified),
           },
         };
+      },
+    },
+    events: {
+      // A brand-new Google/Apple account: email a confirmation code right
+      // away. The user lands on /verify-email (DAL), where they can also
+      // request another code. Failures here must not break sign-in.
+      async createUser({ user }) {
+        if (!user.id || !user.email || user.emailVerified) return;
+        await issueEmailCode({ purpose: "VERIFY_EMAIL", email: user.email.toLowerCase(), userId: user.id }).catch(
+          (error) => console.error("[auth] could not send the verification code:", error),
+        );
       },
     },
   };

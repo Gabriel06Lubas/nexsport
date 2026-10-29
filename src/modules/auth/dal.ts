@@ -22,9 +22,20 @@ export const getCurrentUser = cache(async () => {
 
 export type CurrentUser = NonNullable<Awaited<ReturnType<typeof getCurrentUser>>>;
 
-export async function requireUser(): Promise<CurrentUser> {
+/**
+ * Signed in, but the email may still be unconfirmed. Only for the
+ * confirm-your-email step itself; everything else uses requireUser().
+ */
+export async function requireSignedInUser(): Promise<CurrentUser> {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
+  return user;
+}
+
+/** Signed in with a confirmed email: the default gate for the app. */
+export async function requireUser(): Promise<CurrentUser> {
+  const user = await requireSignedInUser();
+  if (!user.emailConfirmed) redirect("/verify-email");
   return user;
 }
 

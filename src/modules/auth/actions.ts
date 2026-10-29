@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { db } from "@/db";
 import { isUniqueViolation } from "@/db/errors";
+import { idSchema, plainText } from "@/lib/validation";
 import { account, profile, session, user as userTable } from "@/db/schema";
 
 import { signIn, signOut } from "./auth";
@@ -45,7 +46,7 @@ export async function signOutEverywhere() {
 
 export async function revokeSession(formData: FormData) {
   const user = await requireUser();
-  const sessionId = z.string().min(1).max(64).parse(formData.get("sessionId"));
+  const sessionId = idSchema.parse(formData.get("sessionId"));
   // Scoped to the caller: a user can never revoke someone else's session.
   await db.delete(session).where(and(eq(session.id, sessionId), eq(session.userId, user.id)));
   redirect("/dashboard/settings/security?revoked=one");
@@ -68,7 +69,7 @@ export async function unlinkProvider(formData: FormData) {
 
 const onboardingSchema = z.object({
   role: z.enum(selfAssignableRoles),
-  displayName: z.string().trim().min(2, "Use at least 2 characters").max(60, "Use at most 60 characters"),
+  displayName: plainText({ min: 2, max: 60, label: "display name" }),
   handle: z
     .string()
     .trim()

@@ -4,7 +4,7 @@ import type { PgTableExtraConfigValue } from "drizzle-orm/pg-core";
 
 import { createdAt, fk, id, idx, tstz, uniq, updatedAt } from "../columns";
 import { club, sport } from "./clubs";
-import { followStatus, userRole } from "./enums";
+import { emailCodePurpose, followStatus, userRole } from "./enums";
 
 // =============================================================================
 // AUTH & IDENTITY
@@ -90,6 +90,42 @@ export const session = pgTable(
     fk("Session", [t.userId], [user.id]).onDelete("cascade"),
     // Tokens are stored as lowercase hex SHA-256 digests, never raw.
     check("Session_tokenHash_sha256", sql`"tokenHash" ~ '^[0-9a-f]{64}$'`),
+  ],
+);
+
+/**
+ * One-time 6-digit email codes (see src/modules/auth/email-code.ts).
+ * Only an HMAC of the code is stored, keyed with AUTH_SECRET, so a database
+ * leak neither reveals codes nor allows guessing them offline. Each code is
+ * single-use, expires after 10 minutes and allows 5 attempts. Rows also serve
+ * as the send log for rate limiting (per email and per hashed client IP).
+ */
+export const emailCode = pgTable(
+  "EmailCode",
+  {
+    id: id(),
+    purpose: emailCodePurpose().notNull(),
+    /** Lower-cased recipient address. */
+    email: text().notNull(),
+    /** Set for VERIFY_EMAIL (the signed-in user); null for SIGN_IN. */
+    userId: text(),
+    codeHash: text().notNull(),
+    attempts: integer().notNull().default(0),
+    expiresAt: tstz().notNull(),
+    consumedAt: tstz(),
+    /** HMAC of the requesting IP: enough to rate-limit, without storing the IP. */
+    ipHash: text(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    idx("EmailCode", t.email, t.createdAt),
+    idx("EmailCode", t.ipHash, t.createdAt),
+    idx("EmailCode", t.userId),
+    fk("EmailCode", [t.userId], [user.id]).onDelete("cascade"),
+    check("EmailCode_codeHash_hex", sql`"codeHash" ~ '^[0-9a-f]{64}$'`),
+    check("EmailCode_attempts_range", sql`"attempts" BETWEEN 0 AND 5`),
+    check("EmailCode_email_length", sql`char_length("email") BETWEEN 3 AND 254`),
+    check("EmailCode_verify_has_user", sql`"purpose" <> 'VERIFY_EMAIL' OR "userId" IS NOT NULL`),
   ],
 );
 

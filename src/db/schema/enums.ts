@@ -6,6 +6,12 @@ import { pgEnum } from "drizzle-orm/pg-core";
  *  Fine-grained, per-club authority lives in `ClubMember.role`. */
 export const userRole = pgEnum("UserRole", ["SUPER_ADMIN", "CLUB_OWNER", "STAFF", "COACH", "STUDENT"]);
 
+/** Why a one-time email code was sent. */
+export const emailCodePurpose = pgEnum("EmailCodePurpose", [
+  "SIGN_IN", // "Continue with email": proves the address and signs the user in
+  "VERIFY_EMAIL", // confirms the email of a signed-in user (e.g. after Google/Apple sign-up)
+]);
+
 /** The role a user holds *inside a specific club*. */
 export const clubRole = pgEnum("ClubRole", ["OWNER", "STAFF", "COACH", "STUDENT"]);
 

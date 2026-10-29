@@ -8,6 +8,7 @@ declare module "next-auth" {
     role?: UserRole;
     activeClubId?: string | null;
     onboardedAt?: Date | null;
+    emailVerified?: Date | null;
   }
 
   interface Session {
@@ -17,6 +18,8 @@ declare module "next-auth" {
       role: UserRole;
       activeClubId: string | null;
       onboarded: boolean;
+      /** The user confirmed their email with a code we sent. */
+      emailConfirmed: boolean;
     } & DefaultSession["user"];
   }
 }
