@@ -1,0 +1,127 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   nexport design tokens. Light is the default; dark follows the OS unless the
+   page pins data-theme. Components use the semantic names via @theme below.
+   --------------------------------------------------------------------------- */
+:root {
+  --background: #f6f7f2;
+  --foreground: #0b1220;
+  --card: #ffffff;
+  --muted: #eceee6;
+  --muted-foreground: #586172;
+  --border: #dcdfd4;
+  --ink: #0b1220; /* deep navy: primary buttons, dark bands */
+  --ink-foreground: #f6f7f2;
+  --lime: #c8f031; /* brand accent, used as a fill behind ink text */
+  --lime-foreground: #0b1220;
+  --accent-text: #4d6b00; /* readable lime-family text on light surfaces */
+  --chart-1: #5a7d00; /* validated: lightness band + 3:1 vs card */
+  --danger: #b42318;
+  --danger-soft: #fdecea;
+  --success: #067647;
+  --success-soft: #e7f6ee;
+  --warning: #b54708;
+  --warning-soft: #fef3e6;
+  --ring: #5a7d00;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --background: #0a0f1a;
+    --foreground: #eef2f7;
+    --card: #111827;
+    --muted: #172033;
+    --muted-foreground: #9aa4b5;
+    --border: #243049;
+    --ink: #eef2f7;
+    --ink-foreground: #0a0f1a;
+    --lime: #c8f031;
+    --lime-foreground: #0b1220;
+    --accent-text: #c8f031;
+    --chart-1: #7fa31a;
+    --danger: #f97066;
+    --danger-soft: #3a1414;
+    --success: #47cd89;
+    --success-soft: #0d2e1f;
+    --warning: #fdb022;
+    --warning-soft: #3a2608;
+    --ring: #c8f031;
+  }
+}
+
+:root[data-theme="dark"] {
+  --background: #0a0f1a;
+  --foreground: #eef2f7;
+  --card: #111827;
+  --muted: #172033;
+  --muted-foreground: #9aa4b5;
+  --border: #243049;
+  --ink: #eef2f7;
+  --ink-foreground: #0a0f1a;
+  --lime: #c8f031;
+  --lime-foreground: #0b1220;
+  --accent-text: #c8f031;
+  --chart-1: #7fa31a;
+  --danger: #f97066;
+  --danger-soft: #3a1414;
+  --success: #47cd89;
+  --success-soft: #0d2e1f;
+  --warning: #fdb022;
+  --warning-soft: #3a2608;
+  --ring: #c8f031;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-ink: var(--ink);
+  --color-ink-foreground: var(--ink-foreground);
+  --color-lime: var(--lime);
+  --color-lime-foreground: var(--lime-foreground);
+  --color-accent-text: var(--accent-text);
+  --color-chart-1: var(--chart-1);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-ring: var(--ring);
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    background: var(--background);
+    color: var(--foreground);
+    -webkit-font-smoothing: antialiased;
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
