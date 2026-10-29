@@ -10,7 +10,7 @@ next to the data.
 | File | Purpose |
 | --- | --- |
 | `src/modules/auth/auth.ts` | Auth.js config: providers, session policy, callbacks |
-| `src/modules/auth/adapter.ts` | Prisma adapter: hashed tokens, absolute lifetime, device info, no stored provider tokens |
+| `src/modules/auth/adapter.ts` | Drizzle adapter: hashed tokens, absolute lifetime, device info, no stored provider tokens |
 | `src/modules/auth/providers.ts` | Google & Apple setup; Apple client-secret JWT minted from the `.p8` key |
 | `src/modules/auth/dal.ts` | `getCurrentUser`, `requireUser`, `requireOnboardedUser`, `requireArea` |
 | `src/modules/auth/actions.ts` | Server actions: sign in/out, revoke sessions, unlink provider, onboarding |
@@ -19,7 +19,7 @@ next to the data.
 | `src/app/(auth)/login` | Sign-in page |
 | `src/app/(app)/onboarding` | One-time role + profile handle step |
 | `src/app/(app)/dashboard/*` | Role areas (`club`, `coach`, `athlete`) and `settings/security` |
-| `prisma/migrations/20261029000000_oauth_sessions` | Schema changes for this step |
+| `src/db/schema/auth.ts` | `User`, `Account`, `Session`, `Profile` tables |
 | `e2e/auth.e2e.mjs` | Browser end-to-end test against a mock OpenID provider |
 
 ## Sign-in flow

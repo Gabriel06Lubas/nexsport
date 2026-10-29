@@ -1,4 +1,4 @@
-import type { UserRole } from "@/generated/prisma/enums";
+import type { UserRole } from "@/db/schema/enums";
 
 // Role-based access to the dashboard areas (the RBAC table from the spec).
 // SUPER_ADMIN can open every area.

@@ -1,10 +1,12 @@
 "use server";
 
+import { and, eq, isNull, ne } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 
-import { Prisma } from "@/generated/prisma/client";
-import { db } from "@/lib/db";
+import { db } from "@/db";
+import { isUniqueViolation } from "@/db/errors";
+import { account, profile, session, user as userTable } from "@/db/schema";
 
 import { signIn, signOut } from "./auth";
 import { getCurrentSessionTokenHash, requireUser } from "./dal";
@@ -28,14 +30,16 @@ export async function signOutAction() {
 export async function signOutOtherDevices() {
   const user = await requireUser();
   const current = await getCurrentSessionTokenHash();
-  await db.session.deleteMany({ where: { userId: user.id, ...(current && { tokenHash: { not: current } }) } });
+  await db
+    .delete(session)
+    .where(and(eq(session.userId, user.id), current ? ne(session.tokenHash, current) : undefined));
   redirect("/dashboard/settings/security?revoked=others");
 }
 
 /** Ends every session, including this one. */
 export async function signOutEverywhere() {
   const user = await requireUser();
-  await db.session.deleteMany({ where: { userId: user.id } });
+  await db.delete(session).where(eq(session.userId, user.id));
   redirect("/login?signedOut=all");
 }
 
@@ -43,18 +47,18 @@ export async function revokeSession(formData: FormData) {
   const user = await requireUser();
   const sessionId = z.string().min(1).max(64).parse(formData.get("sessionId"));
   // Scoped to the caller: a user can never revoke someone else's session.
-  await db.session.deleteMany({ where: { id: sessionId, userId: user.id } });
+  await db.delete(session).where(and(eq(session.id, sessionId), eq(session.userId, user.id)));
   redirect("/dashboard/settings/security?revoked=one");
 }
 
 export async function unlinkProvider(formData: FormData) {
   const user = await requireUser();
   const provider = z.enum(["google", "apple"]).parse(formData.get("provider"));
-  const accounts = await db.account.findMany({ where: { userId: user.id }, select: { provider: true } });
+  const accounts = await db.select({ provider: account.provider }).from(account).where(eq(account.userId, user.id));
   // Never strand an account: with OAuth-only sign-in, the last linked
   // provider is the only way back in.
   if (accounts.length <= 1) redirect("/dashboard/settings/security?error=last-provider");
-  await db.account.deleteMany({ where: { userId: user.id, provider } });
+  await db.delete(account).where(and(eq(account.userId, user.id), eq(account.provider, provider)));
   redirect("/dashboard/settings/security?unlinked=1");
 }
 
@@ -96,18 +100,19 @@ export async function completeOnboarding(_prev: OnboardingState, formData: FormD
 
   const { role, displayName, handle } = parsed.data;
   try {
-    await db.$transaction(async (tx) => {
-      // `onboardedAt: null` makes this a one-shot: re-submitting the form
+    await db.transaction(async (tx) => {
+      // `onboardedAt IS NULL` makes this a one-shot: re-submitting the form
       // later can't be used to switch roles (e.g. student → club owner).
-      const { count } = await tx.user.updateMany({
-        where: { id: user.id, onboardedAt: null },
-        data: { role, onboardedAt: new Date() },
-      });
-      if (count === 0) return;
-      await tx.profile.create({ data: { userId: user.id, handle, displayName } });
+      const updated = await tx
+        .update(userTable)
+        .set({ role, onboardedAt: new Date() })
+        .where(and(eq(userTable.id, user.id), isNull(userTable.onboardedAt)))
+        .returning({ id: userTable.id });
+      if (updated.length === 0) return;
+      await tx.insert(profile).values({ userId: user.id, handle, displayName });
     });
   } catch (e) {
-    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+    if (isUniqueViolation(e, "Profile_handle_key")) {
       return { errors: { handle: "That handle is taken" }, values: raw };
     }
     throw e;

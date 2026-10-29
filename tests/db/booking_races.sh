@@ -7,7 +7,7 @@
 # SERIALIZABLE, Postgres may abort *both* racers (never admit both), and
 # the retry is what lets one of them through.
 #
-#   DATABASE_URL=postgresql://... prisma/tests/booking_races.sh
+#   DATABASE_URL=postgresql://... tests/db/booking_races.sh
 #
 # Creates rows prefixed "race_" and deletes them afterwards.
 set -euo pipefail

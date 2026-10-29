@@ -1,4 +1,4 @@
-// Marketing copy for the SaaS tiers in prisma `SubscriptionTier`.
+// Marketing copy for the SaaS tiers in the `SubscriptionTier` enum.
 // Prices are placeholders until the Stripe Prices are created.
 
 export type Tier = {

@@ -1,6 +1,6 @@
 import type { DefaultSession } from "next-auth";
 
-import type { UserRole } from "@/generated/prisma/enums";
+import type { UserRole } from "@/db/schema/enums";
 
 declare module "next-auth" {
   /** Fields the adapter loads from the User table. */

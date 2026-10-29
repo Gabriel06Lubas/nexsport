@@ -1,9 +1,11 @@
+import { and, desc, eq, gt } from "drizzle-orm";
 import { Laptop, LogOut, Smartphone } from "lucide-react";
 import type { Metadata } from "next";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { db } from "@/lib/db";
+import { db } from "@/db";
+import { account, session } from "@/db/schema";
 import {
   revokeSession,
   signInWithProvider,
@@ -36,12 +38,18 @@ export default async function SecurityPage({ searchParams }: { searchParams: Sea
   const user = await requireUser();
   const params = await searchParams;
   const [sessions, accounts, currentHash] = await Promise.all([
-    db.session.findMany({
-      where: { userId: user.id, expires: { gt: new Date() } },
-      orderBy: { lastSeenAt: "desc" },
-      select: { id: true, tokenHash: true, userAgent: true, createdAt: true, lastSeenAt: true },
-    }),
-    db.account.findMany({ where: { userId: user.id }, select: { provider: true, createdAt: true } }),
+    db
+      .select({
+        id: session.id,
+        tokenHash: session.tokenHash,
+        userAgent: session.userAgent,
+        createdAt: session.createdAt,
+        lastSeenAt: session.lastSeenAt,
+      })
+      .from(session)
+      .where(and(eq(session.userId, user.id), gt(session.expires, new Date())))
+      .orderBy(desc(session.lastSeenAt)),
+    db.select({ provider: account.provider }).from(account).where(eq(account.userId, user.id)),
     getCurrentSessionTokenHash(),
   ]);
 

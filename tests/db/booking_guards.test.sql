@@ -1,6 +1,6 @@
 -- Integration test for the DB-level booking guards.
 -- Run against a freshly migrated database:
---   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f prisma/tests/booking_guards.test.sql
+--   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/db/booking_guards.test.sql
 -- Everything runs in one transaction that is rolled back at the end.
 BEGIN;
 

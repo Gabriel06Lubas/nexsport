@@ -183,6 +183,19 @@ try {
   check(new URL(strangerPage.url()).searchParams.get("error") === "AccessDenied", "unverified email → /login?error=AccessDenied");
   check(!(await db.query(`SELECT 1 FROM "User" WHERE email = 'unverified@e2e.test'`)).rowCount, "no user created for the unverified email");
 
+  // 5b. Onboarding with a handle someone already has is refused, not a crash.
+  as({ sub: "google-sub-3", email: "second@e2e.test", name: "Second User" });
+  const second = await browser.newContext();
+  const secondPage = await signIn(second, "google");
+  await secondPage.getByLabel("Profile handle").fill("maria.coach");
+  await secondPage.getByRole("button", { name: "Continue" }).click();
+  await secondPage.getByText("That handle is taken").waitFor();
+  check(new URL(secondPage.url()).pathname === "/onboarding", "taken handle → 'That handle is taken', stays on onboarding");
+  await secondPage.getByLabel("Profile handle").fill("second.user");
+  await secondPage.getByRole("button", { name: "Continue" }).click();
+  await secondPage.waitForURL(`${APP}/dashboard/athlete`);
+  check(true, "a free handle then completes onboarding (athlete by default)");
+
   // 6. Devices page lists both sessions; revoking one kills it immediately.
   await page.goto(`${APP}/dashboard/settings/security`);
   await shot(page, "4-security");

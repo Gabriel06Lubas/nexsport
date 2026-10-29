@@ -1,6 +1,6 @@
 // Pure booking math shared by the scheduling service and the marketing demos.
 // Mirrors the database guards in
-// prisma/migrations/20261025000100_booking_guards_and_checks: ranges are
+// drizzle/0001_booking_guards.sql: ranges are
 // half-open [start, end), so back-to-back bookings never conflict.
 
 export type TimeRange = { startsAt: Date; endsAt: Date };

@@ -38,4 +38,4 @@ try {
 }
 
 console.log("PostgreSQL is running at postgresql://postgres:postgres@localhost:5432/nexport");
-console.log("Leave this process running, then in another terminal: npm run db:deploy");
+console.log("Leave this process running, then in another terminal: npm run db:migrate");

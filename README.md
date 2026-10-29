@@ -3,7 +3,7 @@
 Multi-tenant sports management and social platform for clubs, coaches, and
 athletes (football, padel, tennis, fitness, multi-sport clubs).
 
-**Stack:** Next.js (App Router) · TypeScript (strict) · PostgreSQL + Prisma 7 ·
+**Stack:** Next.js (App Router) · TypeScript (strict) · PostgreSQL + Drizzle ORM ·
 Auth.js v5 (RBAC) · Tailwind + shadcn/ui · Stripe Billing + Stripe Connect
 
 ## Build log
@@ -21,22 +21,30 @@ Auth.js v5 (RBAC) · Tailwind + shadcn/ui · Stripe Billing + Stripe Connect
 Requires Node.js 20.9 or newer.
 
 ```bash
-npm install        # also generates the Prisma client (postinstall)
+npm install
 npm run dev        # http://localhost:3000
 npm run build      # production build
 ```
 
 The website runs without a database or `.env`. To sign in you also need the
-database and at least one OAuth provider:
+database and at least one OAuth provider. Create a `.env` with:
 
 ```bash
-cp .env.example .env   # set DATABASE_URL, AUTH_SECRET and Google and/or Apple keys
-npm run db:deploy      # apply migrations
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/nexport"
+AUTH_SECRET="..."            # openssl rand -base64 33
+# plus AUTH_GOOGLE_* and/or AUTH_APPLE_* (see docs/step-2-auth.md)
+```
+
+Then:
+
+```bash
+npm run db:up          # terminal 1: local PostgreSQL on localhost:5432 (leave it running)
+npm run db:migrate     # terminal 2: create the tables
+npm run db:studio      # optional: browse the data in Drizzle Studio
 npm run dev            # then open http://localhost:3000/login
 ```
 
-See [docs/step-2-auth.md](docs/step-2-auth.md) for setting up the Google and
-Apple credentials.
+The database layer (Drizzle ORM) is described in [docs/database.md](docs/database.md).
 
 ## Marketing website
 

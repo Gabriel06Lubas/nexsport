@@ -2,7 +2,7 @@ import "server-only";
 
 import NextAuth, { type NextAuthConfig } from "next-auth";
 
-import { db } from "@/lib/db";
+import { db } from "@/db";
 
 import { NexportAdapter } from "./adapter";
 import { SESSION_IDLE_TIMEOUT_SECONDS, SESSION_UPDATE_AGE_SECONDS } from "./lib/session-policy";

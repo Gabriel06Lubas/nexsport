@@ -1,158 +1,30 @@
--- =============================================================================
--- nexport — integrity guards Prisma's schema language cannot express.
+-- Custom SQL migration (drizzle-kit generate --custom --name=booking_guards).
 --
--- Contents
---   1. Extensions
---   2. CHECK constraints (value ranges, polymorphic "exactly one owner" rules)
---   3. Partial unique indexes
+-- Database guards that Drizzle Kit can't express in the schema. CHECK
+-- constraints and partial unique indexes live in src/db/schema/*.ts; this
+-- file holds only:
+--   1. the btree_gist extension
 --   4. Facility double-booking guard   (GiST exclusion constraint)
 --   5. Equipment over-allocation guard (row-locking trigger)
 --   6. Session seat-capacity guard     (row-locking trigger)
---   7. Session → equipment booking sync (reschedule / cancel cascade)
+--   7. Session -> equipment booking sync (reschedule / cancel cascade)
+-- (Section numbers match docs/step-1-database.md.)
 --
 -- Every guard raises SQLSTATE 23P01 (exclusion_violation) with a stable
 -- constraint name so the app maps them to one domain error:
 --   "PracticeSession_facility_no_overlap"
 --   "EquipmentBooking_capacity"
 --   "SessionParticipant_capacity"
--- =============================================================================
+--
+-- Drizzle Kit only diffs the schema against its own snapshots, so it never
+-- sees (or drops) these objects. Don't use `drizzle-kit push` on a database
+-- that relies on them; use `generate` + `migrate`.
 
 -- 1. EXTENSIONS ---------------------------------------------------------------
 -- btree_gist lets a GiST index combine scalar equality (facilityId =) with
 -- range overlap (tstzrange &&) inside a single exclusion constraint.
 CREATE EXTENSION IF NOT EXISTS btree_gist;
-
-
--- 2. CHECK CONSTRAINTS --------------------------------------------------------
-
--- Identity / social
-ALTER TABLE "Profile"
-  ADD CONSTRAINT "Profile_handle_format" CHECK ("handle" ~ '^[a-z0-9_.]{3,30}$'),
-  ADD CONSTRAINT "Profile_counters_non_negative"
-    CHECK ("followerCount" >= 0 AND "followingCount" >= 0 AND "postCount" >= 0);
-
-ALTER TABLE "Follow"
-  ADD CONSTRAINT "Follow_no_self_follow" CHECK ("followerId" <> "followingId");
-
-ALTER TABLE "Post"
-  ADD CONSTRAINT "Post_counters_non_negative" CHECK ("likeCount" >= 0 AND "commentCount" >= 0);
-
-ALTER TABLE "Comment"
-  ADD CONSTRAINT "Comment_likeCount_non_negative" CHECK ("likeCount" >= 0),
-  ADD CONSTRAINT "Comment_no_self_parent" CHECK ("parentId" IS NULL OR "parentId" <> "id");
-
-ALTER TABLE "Like"
-  ADD CONSTRAINT "Like_exactly_one_target" CHECK (num_nonnulls("postId", "commentId") = 1);
-
-ALTER TABLE "Conversation"
-  ADD CONSTRAINT "Conversation_direct_has_key"
-    CHECK ("type" <> 'DIRECT' OR "directKey" IS NOT NULL);
-
--- Organisation & assets
-ALTER TABLE "Club"
-  ADD CONSTRAINT "Club_slug_format" CHECK ("slug" ~ '^[a-z0-9]+(-[a-z0-9]+)*$'),
-  ADD CONSTRAINT "Club_currency_format" CHECK ("currency" ~ '^[a-z]{3}$');
-
-ALTER TABLE "AgeGroup"
-  ADD CONSTRAINT "AgeGroup_age_bounds"
-    CHECK (("minAge" IS NULL OR "minAge" >= 0)
-       AND ("maxAge" IS NULL OR "maxAge" >= 0)
-       AND ("minAge" IS NULL OR "maxAge" IS NULL OR "minAge" <= "maxAge"));
-
-ALTER TABLE "CoachAssignment"
-  ADD CONSTRAINT "CoachAssignment_has_target"
-    CHECK ("studentMemberId" IS NOT NULL OR "ageGroupId" IS NOT NULL),
-  ADD CONSTRAINT "CoachAssignment_date_order"
-    CHECK ("endsOn" IS NULL OR "endsOn" >= "startsOn");
-
-ALTER TABLE "Facility"
-  ADD CONSTRAINT "Facility_capacity_positive" CHECK ("capacity" IS NULL OR "capacity" > 0),
-  ADD CONSTRAINT "Facility_buffer_non_negative" CHECK ("bufferMinutes" >= 0),
-  ADD CONSTRAINT "Facility_rate_non_negative" CHECK ("hourlyRateAmount" IS NULL OR "hourlyRateAmount" >= 0);
-
-ALTER TABLE "Equipment"
-  ADD CONSTRAINT "Equipment_quantity_non_negative" CHECK ("quantity" >= 0);
-
-ALTER TABLE "EquipmentBooking"
-  ADD CONSTRAINT "EquipmentBooking_quantity_positive" CHECK ("quantity" > 0),
-  ADD CONSTRAINT "EquipmentBooking_time_order" CHECK ("endsAt" > "startsAt");
-
--- Scheduling
-ALTER TABLE "PracticeSession"
-  ADD CONSTRAINT "PracticeSession_time_order" CHECK ("endsAt" > "startsAt"),
-  ADD CONSTRAINT "PracticeSession_price_non_negative" CHECK ("priceAmount" >= 0),
-  ADD CONSTRAINT "PracticeSession_currency_format" CHECK ("currency" ~ '^[a-z]{3}$'),
-  ADD CONSTRAINT "PracticeSession_coach_share_bps" CHECK ("coachShareBps" BETWEEN 0 AND 10000),
-  ADD CONSTRAINT "PracticeSession_max_participants_positive"
-    CHECK ("maxParticipants" IS NULL OR "maxParticipants" > 0),
-  ADD CONSTRAINT "PracticeSession_cancellation_consistent"
-    CHECK (("status" = 'CANCELLED') = ("cancelledAt" IS NOT NULL));
-
-ALTER TABLE "Attendance"
-  ADD CONSTRAINT "Attendance_rating_range"
-    CHECK ("performanceRating" IS NULL OR "performanceRating" BETWEEN 1 AND 5);
-
--- Billing
-ALTER TABLE "Subscription"
-  ADD CONSTRAINT "Subscription_exactly_one_owner" CHECK (num_nonnulls("clubId", "userId") = 1),
-  ADD CONSTRAINT "Subscription_fee_bps" CHECK ("platformFeeBps" BETWEEN 0 AND 10000),
-  ADD CONSTRAINT "Subscription_period_order" CHECK ("currentPeriodEnd" >= "currentPeriodStart");
-
-ALTER TABLE "StripeAccount"
-  ADD CONSTRAINT "StripeAccount_exactly_one_owner" CHECK (num_nonnulls("clubId", "userId") = 1);
-
-ALTER TABLE "PaymentTransaction"
-  ADD CONSTRAINT "PaymentTransaction_amount_positive" CHECK ("amount" > 0),
-  ADD CONSTRAINT "PaymentTransaction_currency_format" CHECK ("currency" ~ '^[a-z]{3}$'),
-  ADD CONSTRAINT "PaymentTransaction_fee_bounds"
-    CHECK ("applicationFeeAmount" >= 0 AND "applicationFeeAmount" <= "amount"),
-  ADD CONSTRAINT "PaymentTransaction_stripe_fee_non_negative"
-    CHECK ("stripeFeeAmount" IS NULL OR "stripeFeeAmount" >= 0),
-  ADD CONSTRAINT "PaymentTransaction_refund_bounds"
-    CHECK ("refundedAmount" >= 0 AND "refundedAmount" <= "amount"),
-  ADD CONSTRAINT "PaymentTransaction_refund_percent"
-    CHECK ("appliedRefundPercent" IS NULL OR "appliedRefundPercent" BETWEEN 0 AND 100),
-  ADD CONSTRAINT "PaymentTransaction_dispute_amount"
-    CHECK ("disputedAmount" IS NULL OR ("disputedAmount" > 0 AND "disputedAmount" <= "amount"));
-
-ALTER TABLE "PaymentTransfer"
-  ADD CONSTRAINT "PaymentTransfer_amount_positive" CHECK ("amount" > 0),
-  ADD CONSTRAINT "PaymentTransfer_reversal_bounds"
-    CHECK ("reversedAmount" >= 0 AND "reversedAmount" <= "amount");
-
-ALTER TABLE "CancellationPolicy"
-  ADD CONSTRAINT "CancellationPolicy_organizer_refund_percent"
-    CHECK ("organizerCancelRefundPercent" BETWEEN 0 AND 100);
-
-ALTER TABLE "CancellationPolicyRule"
-  ADD CONSTRAINT "CancellationPolicyRule_hours_non_negative" CHECK ("minHoursBeforeStart" >= 0),
-  ADD CONSTRAINT "CancellationPolicyRule_percent_range" CHECK ("refundPercent" BETWEEN 0 AND 100);
-
-
--- 3. PARTIAL UNIQUE INDEXES ---------------------------------------------------
-
--- At most one default cancellation policy per club.
-CREATE UNIQUE INDEX "CancellationPolicy_one_default_per_club"
-  ON "CancellationPolicy" ("clubId") WHERE "isDefault";
-
--- At most one live SaaS subscription per owner (club or coach).
-CREATE UNIQUE INDEX "Subscription_one_live_per_club"
-  ON "Subscription" ("clubId")
-  WHERE "clubId" IS NOT NULL AND "status" NOT IN ('CANCELED', 'INCOMPLETE_EXPIRED');
-CREATE UNIQUE INDEX "Subscription_one_live_per_user"
-  ON "Subscription" ("userId")
-  WHERE "userId" IS NOT NULL AND "status" NOT IN ('CANCELED', 'INCOMPLETE_EXPIRED');
-
--- A session seat can have at most one in-flight or successful payment,
--- so a retried checkout can never charge the student twice.
-CREATE UNIQUE INDEX "PaymentTransaction_one_live_per_participant"
-  ON "PaymentTransaction" ("participantId")
-  WHERE "status" NOT IN ('CANCELED', 'FAILED');
-
--- Unread-badge query: WHERE "recipientId" = $1 AND "readAt" IS NULL.
-CREATE INDEX "Notification_unread_by_recipient"
-  ON "Notification" ("recipientId", "createdAt" DESC) WHERE "readAt" IS NULL;
-
+--> statement-breakpoint
 
 -- 4. FACILITY DOUBLE-BOOKING GUARD -------------------------------------------
 -- Two non-cancelled sessions may not overlap on the same facility.
@@ -165,6 +37,7 @@ ALTER TABLE "PracticeSession"
     "facilityId" WITH =,
     tstzrange("startsAt", "endsAt", '[)') WITH &&
   ) WHERE ("status" <> 'CANCELLED');
+--> statement-breakpoint
 
 
 -- 5. EQUIPMENT OVER-ALLOCATION GUARD -----------------------------------------
@@ -226,11 +99,13 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+--> statement-breakpoint
 
 CREATE TRIGGER "EquipmentBooking_capacity_guard"
   BEFORE INSERT OR UPDATE OF "equipmentId", "quantity", "startsAt", "endsAt", "status"
   ON "EquipmentBooking"
   FOR EACH ROW EXECUTE FUNCTION nexport_equipment_booking_capacity_guard();
+--> statement-breakpoint
 
 -- Stock reductions must not strand existing reservations.
 CREATE OR REPLACE FUNCTION nexport_equipment_stock_guard()
@@ -270,10 +145,12 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+--> statement-breakpoint
 
 CREATE TRIGGER "Equipment_stock_guard"
   BEFORE UPDATE OF "quantity" ON "Equipment"
   FOR EACH ROW EXECUTE FUNCTION nexport_equipment_stock_guard();
+--> statement-breakpoint
 
 
 -- 6. SESSION SEAT-CAPACITY GUARD ---------------------------------------------
@@ -330,11 +207,13 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+--> statement-breakpoint
 
 CREATE TRIGGER "SessionParticipant_capacity_guard"
   BEFORE INSERT OR UPDATE OF "status", "sessionId"
   ON "SessionParticipant"
   FOR EACH ROW EXECUTE FUNCTION nexport_session_participant_capacity_guard();
+--> statement-breakpoint
 
 
 -- 7. SESSION → EQUIPMENT BOOKING SYNC ----------------------------------------
@@ -367,6 +246,7 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+--> statement-breakpoint
 
 CREATE TRIGGER "PracticeSession_equipment_sync"
   AFTER UPDATE OF "startsAt", "endsAt", "status"
