@@ -8,6 +8,7 @@
     "build": "next build",
     "start": "next start",
     "test": "vitest run",
+    "postinstall": "prisma generate",
     "db:format": "prisma format",
     "db:validate": "prisma validate",
     "db:generate": "prisma generate",
@@ -41,5 +42,8 @@
     "tailwindcss": "4.3.3",
     "typescript": "^5.9.3",
     "vitest": "5.0.5"
+  },
+  "engines": {
+    "node": ">=20.9.0"
   }
 }

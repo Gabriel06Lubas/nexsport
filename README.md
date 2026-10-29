@@ -18,10 +18,19 @@ Auth.js v5 (RBAC) · Tailwind + shadcn/ui · Stripe Billing + Stripe Connect
 
 ## Quick start
 
+Requires Node.js 20.9 or newer.
+
 ```bash
-cp .env.example .env
-npm install
-npm run db:deploy && npm run db:generate
+npm install        # also generates the Prisma client (postinstall)
+npm run dev        # http://localhost:3000
+npm run build      # production build
+```
+
+The website runs without a database or `.env`. For the database layer:
+
+```bash
+cp .env.example .env   # point DATABASE_URL at PostgreSQL 14+
+npm run db:deploy      # apply migrations
 ```
 
 ## Marketing website
