@@ -38,7 +38,7 @@ guide's `drizzle.config.ts` docs support.
 
 | Command | What it does |
 | --- | --- |
-| `npm run db:up` | Starts a local PostgreSQL on `localhost:5432` with a `nexport` database (data in `.local/pgdata`). Leave it running. |
+| `npm run db:up` | Starts a local PostgreSQL 17 (from the `embedded-postgres` dev dependency) with the port, user and database from `DATABASE_URL`. Data lives in `.local/pgdata`. Leave it running; Ctrl+C stops it. |
 | `npm run db:migrate` | Applies pending migrations from `drizzle/` |
 | `npm run db:studio` | Opens **Drizzle Studio**: browse and edit data at https://local.drizzle.studio |
 | `npm run db:generate` | Creates a new migration from schema changes (`drizzle-kit generate`) |
@@ -55,6 +55,26 @@ files and records progress in the same table
 (`drizzle.__drizzle_migrations`), and prints the actual SQL error. If the
 database was originally set up by the old Prisma migrations, it says how to
 reset the local database.
+
+## Local database (`npm run db:up`)
+
+`db:up` needs nothing installed system-wide: npm downloads real PostgreSQL 17
+binaries for your OS as part of `npm install`. The first run creates a
+UTF-8 database cluster in `.local/pgdata`, using PostgreSQL's built-in
+`C.UTF-8` locale so accented names sort and compare the same on every OS.
+Later runs reuse it.
+
+| Problem | Fix |
+| --- | --- |
+| `Port 5432 is already in use` | Another PostgreSQL is running (a system install, Docker, or a `db:up` still open in another terminal). Stop it, or change the port in `DATABASE_URL` (e.g. `localhost:5433`) and run `db:up` again. The app and `db:migrate` follow the same URL. |
+| `DATABASE_URL points at <host>, not this machine` | `db:up` only runs a local server. Point `DATABASE_URL` at `localhost`. |
+| `type "…" already exists` from `db:migrate` | The database was set up by the old Prisma migrations. Stop `db:up`, delete `.local/pgdata`, start `db:up` again, then `db:migrate`. |
+| Running as root (Docker, dev containers) | Handled: PostgreSQL won't run as root, so `db:up` runs it as a `postgres` user it creates. |
+| A first run was interrupted | Handled: the half-created `.local/pgdata` is removed and set up again. |
+| Start over with an empty database | Stop `db:up`, delete `.local/pgdata`, start it again. |
+
+The user and password only take effect when `.local/pgdata` is first
+created; to change them later, delete `.local/pgdata`.
 
 ## Using the client
 
