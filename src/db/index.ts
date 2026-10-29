@@ -9,7 +9,17 @@ import * as schema from "./schema";
 // so importing this module needs no DATABASE_URL (e.g. during `next build`).
 const globalForDb = globalThis as unknown as { pool?: Pool };
 
-const pool = globalForDb.pool ?? new Pool({ connectionString: process.env.DATABASE_URL });
+function createPool() {
+  const created = new Pool({ connectionString: process.env.DATABASE_URL });
+  // Idle connections can be dropped by the server at any time (Postgres
+  // restarted, `npm run db:up` stopped, a failover). Without a listener that
+  // "error" event is an uncaught exception that crashes the process; with
+  // one, the pool simply opens a new connection for the next query.
+  created.on("error", (error) => console.error(`[db] idle connection lost, will reconnect: ${error.message}`));
+  return created;
+}
+
+const pool = globalForDb.pool ?? createPool();
 if (process.env.NODE_ENV !== "production") globalForDb.pool = pool;
 
 export const db = drizzle({ client: pool, schema });

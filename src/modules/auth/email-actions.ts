@@ -30,7 +30,23 @@ import { useSecureCookies, startSession } from "./session-cookie";
 
 export type CodeFormState = { error?: string; notice?: string; email?: string };
 
-function issueError(result: Exclude<IssueResult, { ok: true }>): string {
+const unavailable = () =>
+  process.env.NODE_ENV === "production"
+    ? "Something went wrong on our side. Please try again in a minute."
+    : "Couldn't reach the database. Is `npm run db:up` running, and have you run `npm run db:migrate`?";
+
+/** issueEmailCode, turning an unreachable/broken database into a form message instead of a crash. */
+async function issueOrExplain(input: Parameters<typeof issueEmailCode>[0]): Promise<IssueResult | { ok: false; reason: "unavailable" }> {
+  try {
+    return await issueEmailCode(input);
+  } catch (error) {
+    console.error("[email-code] could not issue a code:", error instanceof Error ? error.message : error);
+    return { ok: false, reason: "unavailable" };
+  }
+}
+
+function issueError(result: Exclude<IssueResult, { ok: true }> | { ok: false; reason: "unavailable" }): string {
+  if (result.reason === "unavailable") return unavailable();
   switch (result.reason) {
     case "cooldown":
       return `Please wait ${result.retryAfterSeconds} seconds before asking for another code.`;
@@ -60,7 +76,7 @@ export async function requestSignInCode(_prev: CodeFormState, formData: FormData
 
   // Same response whether or not an account exists for this address, so the
   // form can't be used to discover who is registered.
-  const result = await issueEmailCode({ purpose: "SIGN_IN", email: parsed.data });
+  const result = await issueOrExplain({ purpose: "SIGN_IN", email: parsed.data });
   if (!result.ok) return { error: issueError(result), email: parsed.data };
 
   await setPendingCookie(result.id);
@@ -82,7 +98,7 @@ async function setPendingCookie(codeId: string) {
 export async function resendSignInCode(_prev: CodeFormState): Promise<CodeFormState> {
   const email = await pendingSignInEmail();
   if (!email) return { error: "This sign-in has expired. Enter your email again to get a new code." };
-  const result = await issueEmailCode({ purpose: "SIGN_IN", email });
+  const result = await issueOrExplain({ purpose: "SIGN_IN", email });
   if (!result.ok) return { error: issueError(result) };
   await setPendingCookie(result.id);
   return { notice: "We sent you a new code. Earlier codes no longer work." };
@@ -131,7 +147,7 @@ export async function sendVerifyEmailCode(_prev: CodeFormState): Promise<CodeFor
   const user = await requireSignedInUser();
   await assertNotImpersonating();
   if (user.emailConfirmed) redirect("/dashboard");
-  const result = await issueEmailCode({ purpose: "VERIFY_EMAIL", email: user.email.toLowerCase(), userId: user.id });
+  const result = await issueOrExplain({ purpose: "VERIFY_EMAIL", email: user.email.toLowerCase(), userId: user.id });
   if (!result.ok) return { error: issueError(result) };
   return { notice: "We sent you a new code. Earlier codes no longer work." };
 }

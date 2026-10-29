@@ -9,6 +9,7 @@ import { emailCode } from "@/db/schema";
 import { sendEmail } from "@/modules/notifications/email";
 
 import { verificationCodeEmail } from "./emails/verification-code";
+import { authSecret } from "./secret";
 import { useSecureCookies } from "./session-cookie";
 import {
   CODE_TTL_SECONDS,
@@ -28,11 +29,7 @@ import {
 type Purpose = "SIGN_IN" | "VERIFY_EMAIL";
 type EmailCodeRow = typeof emailCode.$inferSelect;
 
-function secret(): string {
-  const value = process.env.AUTH_SECRET;
-  if (!value) throw new Error("AUTH_SECRET is not set");
-  return value;
-}
+const secret = authSecret;
 
 /**
  * Client IP for rate limiting. Takes the first X-Forwarded-For entry, which

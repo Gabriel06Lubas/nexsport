@@ -2,7 +2,9 @@ import type { Metadata, Route } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { checkDatabase } from "@/db/health";
 import { signInWithProvider } from "@/modules/auth/actions";
+import { DevDatabaseNotice } from "@/modules/auth/components/dev-database-notice";
 import { EmailSignInForm } from "@/modules/auth/components/email-sign-in-form";
 import { AppleIcon, GoogleIcon } from "@/modules/auth/components/provider-icons";
 import { getCurrentUser } from "@/modules/auth/dal";
@@ -30,9 +32,12 @@ export default async function LoginPage({ searchParams }: { searchParams: Search
   const callbackUrl = safeCallbackUrl(first(params.callbackUrl));
 
   const error = first(params.error);
+  // Development only: say exactly what to run if the database isn't ready,
+  // and don't look up the session against a database that can't answer.
+  const health = process.env.NODE_ENV === "production" ? ({ ok: true } as const) : await checkDatabase();
   // Signed-in users skip the page, unless there is an error to show (e.g.
   // connecting a second provider that belongs to another account).
-  if (!error && (await getCurrentUser())) redirect(callbackUrl as Route);
+  if (!error && health.ok && (await getCurrentUser())) redirect(callbackUrl as Route);
 
   const signedOut = first(params.signedOut);
   const providers = configuredProviderIds();
@@ -44,6 +49,8 @@ export default async function LoginPage({ searchParams }: { searchParams: Search
       <div className="rounded-3xl border border-border bg-card p-6 shadow-[0_24px_60px_-30px_rgb(11_18_32/0.35)] sm:p-8">
         <h1 className="text-2xl font-semibold tracking-tight">Sign in to nexport</h1>
         <p className="mt-2 text-sm text-muted-foreground">New here? Signing in creates your account.</p>
+
+        {!health.ok && <DevDatabaseNotice health={health} />}
 
         {error && (
           <p role="alert" className="mt-5 rounded-xl bg-danger-soft p-3 text-sm text-danger">

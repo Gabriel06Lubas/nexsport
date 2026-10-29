@@ -72,6 +72,8 @@ Later runs reuse it.
 | Running as root (Docker, dev containers) | Handled: PostgreSQL won't run as root, so `db:up` runs it as a `postgres` user it creates. |
 | A first run was interrupted | Handled: the half-created `.local/pgdata` is removed and set up again. |
 | Start over with an empty database | Stop `db:up`, delete `.local/pgdata`, start it again. |
+| A yellow "the database isn't ready" box on `/login` | Development-only check: it says whether the server is unreachable (`npm run db:up`, check `DATABASE_URL`) or migrations are missing (`npm run db:migrate`, e.g. after pulling new changes). |
+| `[db] idle connection lost, will reconnect` in the dev terminal | Postgres was restarted while the app was running. Harmless: the next request reconnects. |
 
 The user and password only take effect when `.local/pgdata` is first
 created; to change them later, delete `.local/pgdata`.

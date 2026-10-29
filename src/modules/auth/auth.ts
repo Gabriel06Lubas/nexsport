@@ -8,6 +8,7 @@ import { NexportAdapter } from "./adapter";
 import { issueEmailCode } from "./email-code";
 import { SESSION_IDLE_TIMEOUT_SECONDS, SESSION_UPDATE_AGE_SECONDS } from "./lib/session-policy";
 import { buildProviders, isAppleConfigured } from "./providers";
+import { authSecret } from "./secret";
 import { useSecureCookies } from "./session-cookie";
 
 // Apple returns users with a cross-site POST (response_mode=form_post), and
@@ -32,6 +33,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth(async (): Promise<Ne
   const providers = await buildProviders();
 
   return {
+    // AUTH_SECRET, or in development a generated one (see secret.ts).
+    secret: authSecret(),
     adapter: NexportAdapter(db),
     providers,
     // Server-side sessions: the cookie holds an opaque random token and every
