@@ -13,7 +13,7 @@ type Option = { id: string; label: string };
 // Quick action: schedule a session in a modal. Availability of the court,
 // the coach and the equipment is checked by the server and the database when
 // it's submitted; the dialog shows the reason if the slot isn't free.
-export function NewSessionDialog({ facilities, sports, equipment, defaultDate }: { facilities: Option[]; sports: Option[]; equipment: Option[]; defaultDate: string }) {
+export function NewSessionDialog({ facilities, sports, equipment, defaultDate, defaultSportId }: { facilities: Option[]; sports: Option[]; equipment: Option[]; defaultDate: string; defaultSportId?: string | null }) {
   const ref = useRef<HTMLDialogElement>(null);
   const disabled = facilities.length === 0;
   return (
@@ -47,12 +47,14 @@ export function NewSessionDialog({ facilities, sports, equipment, defaultDate }:
             />
             <Field name="title" label="Title" placeholder="Backhand clinic" maxLength={80} />
             <SelectField name="facilityId" label="Club · facility" options={facilities.map((f) => ({ value: f.id, label: f.label }))} className="sm:col-span-2" />
-            <SelectField name="sportId" label="Sport" options={sports.map((s) => ({ value: s.id, label: s.label }))} />
+            <SelectField name="sportId" label="Sport" options={sports.map((s) => ({ value: s.id, label: s.label }))} defaultValue={defaultSportId ?? undefined} />
             <Field name="date" label="Date" type="date" defaultValue={defaultDate} min={defaultDate} />
             <Field name="startTime" label="From" type="time" step={900} defaultValue="18:00" hint="Club's local time" />
             <Field name="endTime" label="Until" type="time" step={900} defaultValue="19:00" />
             <Field name="maxParticipants" label="Max students" inputMode="numeric" hint="Blank: 1 for private, court capacity otherwise" />
-            <Field name="price" label="Price per student" inputMode="decimal" placeholder="25" hint="Blank = free / included in passes" />
+            <Field name="price" label="Price per student" inputMode="decimal" placeholder="25" hint="Blank: free; open matches split the court price" />
+            <Field name="minLevel" label="Level from" inputMode="decimal" placeholder="3.0" hint="Optional, 0–10" />
+            <Field name="maxLevel" label="Level to" inputMode="decimal" placeholder="4.0" />
             <Field name="studentEmail" label="Add a student (email)" type="email" autoComplete="off" hint="Optional" className="sm:col-span-2" />
             <SelectField name="equipmentId" label="Reserve equipment" options={[{ id: "", label: "None" }, ...equipment].map((e) => ({ value: e.id, label: e.label }))} />
             <Field name="equipmentQuantity" label="Units" inputMode="numeric" />

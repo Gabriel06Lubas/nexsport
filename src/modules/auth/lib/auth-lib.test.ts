@@ -43,7 +43,7 @@ describe("roles", () => {
   it("sends each role to a home it can access", () => {
     expect(homePathFor("STAFF")).toBe("/dashboard/club");
     expect(homePathFor("COACH")).toBe("/dashboard/coach");
-    expect(homePathFor("STUDENT")).toBe("/dashboard/athlete");
+    expect(homePathFor("STUDENT")).toBe("/dashboard/student");
     expect(homePathFor("ADMIN")).toBe("/admin");
   });
 });

@@ -17,6 +17,7 @@ Auth.js v5 (RBAC) · Tailwind + shadcn/ui · Stripe Billing + Stripe Connect
 | — | [Admin dashboard](docs/admin.md): KPIs, tenants, plans, financials, logs, impersonation | ✅ |
 | — | [Club dashboard](docs/club-dashboard.md): analytics, courts & dynamic pricing, equipment, bookings, memberships, staff & payroll, billing | ✅ |
 | — | [Coach dashboard](docs/coach-dashboard.md): schedule, students & credits, public booking link, earnings | ✅ |
+| — | [Student dashboard](docs/student-dashboard.md): schedule, bookings & refunds, open matches with Stripe split checkout, account | ✅ |
 | — | [Marketing website](#marketing-website) | ✅ |
 
 ## Quick start
@@ -43,7 +44,7 @@ Then:
 npm run db:up          # terminal 1: local PostgreSQL on localhost:5432 (leave it running)
 npm run db:migrate     # terminal 2: create the tables
 npm run db:seed        # optional: demo clubs, coaches and payments (local only);
-                       # sign in as owner01@demo.nexport.test (club) or coach01@demo.nexport.test (coach)
+                       # sign in as owner01@ (club), coach01@ or athlete01@demo.nexport.test
 npm run db:studio      # optional: browse the data in Drizzle Studio
 npm run dev            # then open http://localhost:3000/login
 ```

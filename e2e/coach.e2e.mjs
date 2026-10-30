@@ -135,7 +135,7 @@ try {
 
   const athlete = await emailSignIn(await newContext(), "athlete01@demo.nexport.test");
   await athlete.goto(`${APP}${COACH}/earnings`);
-  check(await landed(athlete, "/dashboard/athlete"), "a student is sent to their own home, not the coach area");
+  check(await landed(athlete, "/dashboard/student"), "a student is sent to their own home, not the coach area");
   const owner = await emailSignIn(await newContext(), "owner01@demo.nexport.test");
   await owner.goto(`${APP}${COACH}`);
   check(await landed(owner, "/dashboard/demo-padel-central"), "a club owner is sent to their club");
@@ -165,8 +165,8 @@ try {
     await modal.getByLabel("Title").fill(title);
     await modal.getByLabel("Club · facility").selectOption({ label: facility });
     await modal.getByLabel("Date").fill(nextMonday);
-    await modal.getByLabel("From").fill(from);
-    await modal.getByLabel("Until").fill(until);
+    await modal.getByLabel(/^From/).fill(from);
+    await modal.getByLabel(/^Until/).fill(until);
     await modal.getByLabel("Max students").fill(max);
     await modal.getByLabel("Add a student (email)").fill(student);
     await modal.getByLabel("Reserve equipment").selectOption({ label: equipment });
@@ -258,13 +258,13 @@ try {
   await coach.getByText("Add working hours").click();
   const hoursForm = form(coach, "Add working hours");
   await hoursForm.getByLabel("Sun", { exact: true }).check();
-  await hoursForm.getByLabel("From").fill("10:00");
-  await hoursForm.getByLabel("Until").fill("12:00");
+  await hoursForm.getByLabel(/^From/).fill("10:00");
+  await hoursForm.getByLabel(/^Until/).fill("12:00");
   await hoursForm.getByRole("button", { name: "Add hours" }).click();
   check(await said(coach, "Sun · 10:00–12:00"), "a Sunday window is added");
   await hoursForm.getByLabel("Sun", { exact: true }).check();
-  await hoursForm.getByLabel("From").fill("11:00");
-  await hoursForm.getByLabel("Until").fill("13:00");
+  await hoursForm.getByLabel(/^From/).fill("11:00");
+  await hoursForm.getByLabel(/^Until/).fill("13:00");
   await hoursForm.getByRole("button", { name: "Add hours" }).click();
   check(await said(hoursForm, "overlaps one of your availability windows"), "overlapping windows are refused");
 

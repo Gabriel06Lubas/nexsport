@@ -6,6 +6,7 @@ export * from "./clubs";
 export * from "./scheduling";
 export * from "./memberships";
 export * from "./coaching";
+export * from "./athlete";
 export * from "./social";
 export * from "./billing";
 export * from "./notifications";

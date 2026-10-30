@@ -175,7 +175,13 @@ export const paymentTransaction = pgTable(
     applicationFeeAmount: integer().notNull().default(0),
     stripeFeeAmount: integer(),
     status: paymentStatus().notNull().default("REQUIRES_PAYMENT_METHOD"),
-    stripePaymentIntentId: text().notNull(),
+    /** pi_…; null until Stripe creates the intent (Checkout creates it on payment). */
+    stripePaymentIntentId: text(),
+    /** cs_…: the Checkout Session collecting this payment, while one is open. */
+    stripeCheckoutSessionId: text(),
+    checkoutUrl: text(),
+    /** The seat is held until then; an unpaid hold is released afterwards. */
+    checkoutExpiresAt: tstz(),
     stripeChargeId: text(),
     /** Stripe `transfer_group`, ties the charge to its downstream transfers. */
     transferGroup: text().notNull(),
@@ -203,6 +209,7 @@ export const paymentTransaction = pgTable(
   (t) => [
     uniq("PaymentTransaction", t.stripePaymentIntentId),
     uniq("PaymentTransaction", t.stripeChargeId),
+    uniq("PaymentTransaction", t.stripeCheckoutSessionId),
     uniq("PaymentTransaction", t.idempotencyKey),
     uniq("PaymentTransaction", t.stripeDisputeId),
     idx("PaymentTransaction", t.clubId, t.createdAt),

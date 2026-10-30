@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { char, check, integer, pgTable, smallint, text, unique } from "drizzle-orm/pg-core";
+import { char, check, integer, numeric, pgTable, smallint, text, unique } from "drizzle-orm/pg-core";
 
 import { createdAt, fk, id, idx, tstz, uniq, updatedAt } from "../columns";
 import { user } from "./auth";
@@ -46,6 +46,9 @@ export const practiceSession = pgTable(
     title: text().notNull(),
     description: text(),
     kind: sessionKind().notNull().default("GROUP"),
+    /** Playing level wanted (0.0–10.0, e.g. padel 3.5); open matches use it for matchmaking. */
+    minLevel: numeric({ precision: 3, scale: 1, mode: "number" }),
+    maxLevel: numeric({ precision: 3, scale: 1, mode: "number" }),
     startsAt: tstz().notNull(),
     endsAt: tstz().notNull(),
     status: sessionStatus().notNull().default("SCHEDULED"),
@@ -83,6 +86,10 @@ export const practiceSession = pgTable(
     check("PracticeSession_price_non_negative", sql`"priceAmount" >= 0`),
     check("PracticeSession_currency_format", sql`"currency" ~ '^[a-z]{3}$'`),
     check("PracticeSession_coach_share_bps", sql`"coachShareBps" BETWEEN 0 AND 10000`),
+    check(
+      "PracticeSession_level_range",
+      sql`("minLevel" IS NULL OR "minLevel" BETWEEN 0 AND 10) AND ("maxLevel" IS NULL OR "maxLevel" BETWEEN 0 AND 10) AND ("minLevel" IS NULL OR "maxLevel" IS NULL OR "minLevel" <= "maxLevel")`,
+    ),
     check("PracticeSession_max_participants_positive", sql`"maxParticipants" IS NULL OR "maxParticipants" > 0`),
     check("PracticeSession_cancellation_consistent", sql`("status" = 'CANCELLED') = ("cancelledAt" IS NOT NULL)`),
   ],

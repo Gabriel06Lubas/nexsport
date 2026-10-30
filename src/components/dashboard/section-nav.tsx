@@ -1,6 +1,6 @@
 "use client";
 
-import { Building2, CalendarClock, CalendarDays, CreditCard, IdCard, LayoutDashboard, Link2, Menu, Users, Wallet, X } from "lucide-react";
+import { Building2, CalendarClock, CalendarDays, CreditCard, House, IdCard, LayoutDashboard, Link2, Menu, Settings, Ticket, Trophy, Users, Wallet, X } from "lucide-react";
 import type { Route } from "next";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -23,10 +23,14 @@ const icons = {
   students: Users,
   availability: Link2,
   earnings: Wallet,
+  home: House,
+  bookings: Ticket,
+  matches: Trophy,
+  settings: Settings,
 } as const;
 
 export type NavIcon = keyof typeof icons;
-export type NavItem = { path: string; label: string; icon: NavIcon };
+export type NavItem = { path: string; label: string; icon: NavIcon; /** Tab-bar label on phones. */ short?: string };
 
 function NavLinks({ base, items, onNavigate }: { base: string; items: NavItem[]; onNavigate?: () => void }) {
   const pathname = usePathname();
@@ -54,6 +58,40 @@ function NavLinks({ base, items, onNavigate }: { base: string; items: NavItem[];
         );
       })}
     </ul>
+  );
+}
+
+/**
+ * Phones: a fixed tab bar at the bottom (thumb reach) instead of the menu
+ * button. The page needs bottom padding so the bar never covers content.
+ */
+export function BottomNav({ label, base, items }: { label: string; base: string; items: NavItem[] }) {
+  const pathname = usePathname();
+  return (
+    <nav
+      aria-label={`${label} (tabs)`}
+      className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-md lg:hidden"
+    >
+      <ul className="mx-auto grid max-w-lg" style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}>
+        {items.map((item) => {
+          const href = `${base}${item.path}`;
+          const active = item.path === "" ? pathname === base : pathname === href || pathname.startsWith(`${href}/`);
+          const Icon = icons[item.icon];
+          return (
+            <li key={item.path}>
+              <Link
+                href={href as Route}
+                aria-current={active ? "page" : undefined}
+                className={cn("flex flex-col items-center gap-0.5 px-1 py-2 text-[11px] font-medium", active ? "text-foreground" : "text-muted-foreground")}
+              >
+                <Icon className={cn("size-5", active && "text-accent-text")} aria-hidden />
+                <span className="truncate">{item.short ?? item.label}</span>
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    </nav>
   );
 }
 

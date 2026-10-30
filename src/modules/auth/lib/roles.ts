@@ -14,7 +14,7 @@ export const areaRoles: Record<DashboardArea, readonly UserRole[]> = {
 export const areaPaths = {
   club: "/dashboard/club",
   coach: "/dashboard/coach",
-  athlete: "/dashboard/athlete",
+  athlete: "/dashboard/student",
 } as const satisfies Record<DashboardArea, string>;
 
 const homeArea: Record<Exclude<UserRole, "ADMIN">, DashboardArea> = {

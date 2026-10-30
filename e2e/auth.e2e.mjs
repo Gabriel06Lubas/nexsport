@@ -234,8 +234,8 @@ try {
   // 3. RBAC: a coach can't open other areas.
   await page.goto(`${APP}/dashboard/club`);
   check(new URL(page.url()).pathname === "/dashboard/coach", "coach → /dashboard/club is redirected to /dashboard/coach");
-  await page.goto(`${APP}/dashboard/athlete`);
-  check(new URL(page.url()).pathname === "/dashboard/coach", "coach → /dashboard/athlete is redirected to /dashboard/coach");
+  await page.goto(`${APP}/dashboard/student`);
+  check(new URL(page.url()).pathname === "/dashboard/coach", "coach → /dashboard/student is redirected to /dashboard/coach");
   await page.goto(`${APP}/onboarding`);
   check(new URL(page.url()).pathname === "/dashboard/coach", "onboarding can't be re-run once completed");
   await page.goto(`${APP}/login?callbackUrl=//evil.example`);
@@ -269,7 +269,7 @@ try {
   check(new URL(secondPage.url()).pathname === "/onboarding", "taken handle → 'That handle is taken', stays on onboarding");
   await secondPage.getByLabel("Profile handle").fill("second.user");
   await secondPage.getByRole("button", { name: "Continue" }).click();
-  await secondPage.waitForURL(`${APP}/dashboard/athlete`);
+  await secondPage.waitForURL(`${APP}/dashboard/student`);
   check(true, "a free handle then completes onboarding (athlete by default)");
   const { rows: stored } = await db.query(`SELECT "displayName" FROM "Profile" WHERE handle = 'second.user'`);
   check(stored[0]?.displayName === sqlName && (await db.query(`SELECT to_regclass('public."User"') IS NOT NULL AS ok`)).rows[0].ok, "an SQL payload as display name is stored as plain text; nothing is executed");

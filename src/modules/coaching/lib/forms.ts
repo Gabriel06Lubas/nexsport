@@ -6,6 +6,7 @@ import { idSchema, plainText } from "@/lib/validation";
 import { emailSchema } from "@/modules/auth/lib/email-code-policy";
 import { clubSlugPattern } from "@/modules/clubs/lib/permissions";
 import { isValidTimeZone, timeToMinute } from "@/modules/clubs/lib/zoned-time";
+import { levelSchema } from "@/modules/student/lib/forms";
 
 // Coach dashboard forms, validated on the server. Same rules as the club
 // forms: exact money, times on a 15-minute grid, ids as [a-z0-9], free text
@@ -47,7 +48,10 @@ export const sessionSchema = z
     studentEmail: optional(emailSchema),
     equipmentId: optional(idSchema),
     equipmentQuantity: optional(intIn(1, 1000, "the quantity")),
+    minLevel: levelSchema,
+    maxLevel: levelSchema,
   })
+  .refine((s) => s.minLevel === null || s.maxLevel === null || s.minLevel <= s.maxLevel, { path: ["maxLevel"], message: "Use a range from low to high" })
   .refine((s) => s.startTime < s.endTime, { path: ["endTime"], message: "End must be after start" })
   .refine((s) => s.endTime - s.startTime >= 30 && s.endTime - s.startTime <= 4 * 60, { path: ["endTime"], message: "Sessions last from 30 minutes to 4 hours" })
   .refine((s) => s.kind !== "PRIVATE" || s.maxParticipants === null || s.maxParticipants <= 2, {

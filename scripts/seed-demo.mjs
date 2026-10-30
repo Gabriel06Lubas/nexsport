@@ -39,8 +39,9 @@ const pad = (n) => String(n).padStart(2, "0");
 await q("BEGIN");
 try {
   // ---- Remove the previous demo data (cascades take care of children) ------
-  await q(`DELETE FROM "PaymentTransfer" WHERE id LIKE 'demo%'`);
-  await q(`DELETE FROM "PaymentTransaction" WHERE id LIKE 'demo%'`);
+  // Payments of demo clubs, including ones made while testing the demo.
+  await q(`DELETE FROM "PaymentTransfer" WHERE id LIKE 'demo%' OR "paymentId" IN (SELECT id FROM "PaymentTransaction" WHERE "clubId" LIKE 'demo%')`);
+  await q(`DELETE FROM "PaymentTransaction" WHERE id LIKE 'demo%' OR "clubId" LIKE 'demo%'`);
   // Rows that reference their parent with ON DELETE RESTRICT go first.
   await q(`DELETE FROM "FacilityBooking" WHERE "clubId" LIKE 'demo%'`);
   await q(`DELETE FROM "MemberPass" WHERE "clubId" LIKE 'demo%'`);
@@ -421,6 +422,47 @@ try {
       }
     }
 
+    // Student dashboard: a cancellation policy, an address for directions,
+    // levels and preferences, and open matches with free seats (court 1 at
+    // 14:00 on weekdays, hosted by Tom Becker).
+    await q(`UPDATE "Club" SET "addressLine1" = 'Carrer de Colón 12', "postalCode" = '46004' WHERE id = $1`, [clubId]);
+    await q(
+      `INSERT INTO "CancellationPolicy"(id, "clubId", name, description, "isDefault", "organizerCancelRefundPercent", "updatedAt")
+       VALUES ('demopolicy01', $1, 'Standard 24h', 'Full refund up to 24 hours before, half up to 6 hours before.', true, 100, now())`,
+      [clubId],
+    );
+    for (const [hours, percent] of [[24, 100], [6, 50], [0, 0]]) {
+      await q(`INSERT INTO "CancellationPolicyRule"(id, "policyId", "minHoursBeforeStart", "refundPercent") VALUES ($1, 'demopolicy01', $2, $3)`, [`demorule24h${hours}`, hours, percent]);
+    }
+    for (const [a, level] of [3.5, 3.0, 4.0, 2.5, 5.0, 3.5].entries()) {
+      await q(`INSERT INTO "ProfileSport"("profileId", "sportId", level, "levelRating") VALUES ($1, $2, $3, $4)`, [`${athletes[a]}p`, sportId, `Level ${level.toFixed(1)}`, level]);
+      await q(`INSERT INTO "AthleteSettings"("userId", "matchAlerts", "bookingUpdates", "updatedAt") VALUES ($1, true, true, now())`, [athletes[a]]);
+      await q(`INSERT INTO "AthletePreferredClub"("userId", "clubId") VALUES ($1, $2)`, [athletes[a], clubId]);
+    }
+    {
+      let matchNo = 0;
+      const levelsFor = [[3.0, 4.0], [null, null], [5.0, 6.0]];
+      for (let d = 1; d <= 14; d++) {
+        if (dowOf(d) > 5) continue;
+        matchNo++;
+        const [min, max] = levelsFor[matchNo % 3];
+        const id = `demoopen${String(matchNo).padStart(2, "0")}`;
+        // 90 minutes at the standard €24/h = €36 for the court, €9 per player.
+        await q(
+          `INSERT INTO "PracticeSession"(id, "clubId", "facilityId", "coachId", "sportId", "createdById", title, kind, "minLevel", "maxLevel", "startsAt", "endsAt",
+             status, "maxParticipants", "priceAmount", "coachShareBps", "updatedAt")
+           VALUES ($1, $2, 'demofac011', 'democoach02', $3, 'democoach02', 'Lunchtime open match', 'OPEN_MATCH', $4, $5, $6, $7, 'SCHEDULED', 4, 900, 6500, now())`,
+          [id, clubId, sportId, min, max, local(d, 840), local(d, 930)],
+        );
+        // Two players already in (athletes 2 and 3 at levels 3.0 / 4.0), on the matches that fit them.
+        if (min === 3.0) {
+          for (const a of [1, 2]) {
+            await q(`INSERT INTO "SessionParticipant"(id, "sessionId", "userId", status, "updatedAt") VALUES ($1, $2, $3, 'ACCEPTED', now())`, [`${id}${a}`, id, athletes[a]]);
+          }
+        }
+      }
+    }
+
     // Attendance on every completed session at the club: mostly present.
     await q(
       `INSERT INTO "Attendance"(id, "sessionId", "participantId", "userId", status, "checkedInAt", "markedById", "updatedAt")
@@ -543,4 +585,5 @@ try {
 console.log("Demo data ready: 6 clubs, 5 independent coaches, 6 athletes, payments, disputes and webhook events.");
 console.log("Club dashboard: sign in as owner01@demo.nexport.test (Padel Central) or staff01@demo.nexport.test (front desk).");
 console.log("Coach dashboard: sign in as coach01@demo.nexport.test (booking page: /coach/lucia-romero).");
+console.log("Student dashboard: sign in as athlete01@demo.nexport.test.");
 console.log("Admins aren't seeded; see docs/admin.md to create yours.");

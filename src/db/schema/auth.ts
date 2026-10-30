@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { boolean, check, date, integer, pgTable, primaryKey, text, varchar } from "drizzle-orm/pg-core";
+import { boolean, check, date, integer, numeric, pgTable, primaryKey, text, varchar } from "drizzle-orm/pg-core";
 import type { PgTableExtraConfigValue } from "drizzle-orm/pg-core";
 
 import { createdAt, fk, id, idx, tstz, uniq, updatedAt } from "../columns";
@@ -177,8 +177,11 @@ export const profileSport = pgTable(
     sportId: text().notNull(),
     /** Free-form level, e.g. "Beginner", "NTRP 4.0", "Playtomic 3.5". */
     level: text(),
+    /** Numeric level 0.0–10.0 used to match open matches. */
+    levelRating: numeric({ precision: 3, scale: 1, mode: "number" }),
   },
   (t) => [
+    check("ProfileSport_level_rating", sql`"levelRating" IS NULL OR "levelRating" BETWEEN 0 AND 10`),
     primaryKey({ name: "ProfileSport_pkey", columns: [t.profileId, t.sportId] }),
     idx("ProfileSport", t.sportId),
     fk("ProfileSport", [t.profileId], [profile.id]).onDelete("cascade"),

@@ -12,6 +12,7 @@
     "test:e2e:admin": "node e2e/admin.e2e.mjs",
     "test:e2e:club": "node e2e/club.e2e.mjs",
     "test:e2e:coach": "node e2e/coach.e2e.mjs",
+    "test:e2e:student": "node e2e/student.e2e.mjs",
     "db:up": "node scripts/local-postgres.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node scripts/db-migrate.mjs",
@@ -36,6 +37,7 @@
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "server-only": "0.0.1",
+    "stripe": "23.0.0",
     "tailwind-merge": "3.7.0",
     "zod": "4.6.7"
   },

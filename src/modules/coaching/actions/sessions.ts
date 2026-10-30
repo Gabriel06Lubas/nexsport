@@ -1,13 +1,17 @@
 "use server";
 
 import { and, eq, gt, inArray, isNull, lte, sql } from "drizzle-orm";
+import { after } from "next/server";
 
 import { db } from "@/db";
 import { isUniqueViolation } from "@/db/errors";
-import { equipment, equipmentBooking, facility, paymentTransaction, practiceSession, sessionParticipant, sport, user } from "@/db/schema";
+import { equipment, equipmentBooking, facility, facilityPriceRule, paymentTransaction, practiceSession, sessionParticipant, sport, user } from "@/db/schema";
 import { formValues, invalid, type ActionState } from "@/lib/action-state";
 import { idOnly } from "@/modules/clubs/lib/forms";
+import { quoteBooking } from "@/modules/clubs/lib/pricing";
 import { minuteToTime, zonedToUtc } from "@/modules/clubs/lib/zoned-time";
+import { splitShare } from "@/modules/student/lib/cancellation";
+import { notifyMatchAlerts } from "@/modules/student/match-alerts";
 
 import { coachShareFor, getCoachClubs, requireCoach } from "../dal";
 import { addParticipantSchema, cancelSessionSchema, sessionSchema } from "../lib/forms";
@@ -30,7 +34,7 @@ export async function createSession(_prev: ActionState, formData: FormData): Pro
 
   const clubs = await getCoachClubs(coach.id);
   const [court] = await db
-    .select({ id: facility.id, clubId: facility.clubId, name: facility.name, isActive: facility.isActive, openMinute: facility.openMinute, closeMinute: facility.closeMinute, capacity: facility.capacity })
+    .select({ id: facility.id, clubId: facility.clubId, name: facility.name, isActive: facility.isActive, openMinute: facility.openMinute, closeMinute: facility.closeMinute, capacity: facility.capacity, rate: facility.hourlyRateAmount })
     .from(facility)
     .where(and(eq(facility.id, s.facilityId), inArray(facility.clubId, clubs.length ? clubs.map((c) => c.clubId) : [""])));
   const club = clubs.find((c) => c.clubId === court?.clubId);
@@ -47,8 +51,20 @@ export async function createSession(_prev: ActionState, formData: FormData): Pro
   if (!startsAt || !endsAt) return fail("startTime", "That time doesn't exist on that date (clock change)");
   if (startsAt.getTime() <= Date.now()) return fail("date", "Pick a time in the future");
 
-  const max = s.maxParticipants ?? (s.kind === "PRIVATE" ? 1 : court.capacity);
+  const max = s.maxParticipants ?? (s.kind === "PRIVATE" ? 1 : s.kind === "OPEN_MATCH" ? (court.capacity ?? 4) : court.capacity);
   if (court.capacity !== null && max !== null && max > court.capacity) return fail("maxParticipants", `${court.name} holds ${court.capacity} people`);
+
+  // Open matches without a price: each player pays an equal share of the
+  // court's price for that slot (dynamic pricing), rounded up.
+  let price = s.price ?? 0;
+  if (s.kind === "OPEN_MATCH" && s.price === null && max) {
+    const rules = await db
+      .select({ dayOfWeek: facilityPriceRule.dayOfWeek, startMinute: facilityPriceRule.startMinute, endMinute: facilityPriceRule.endMinute, tier: facilityPriceRule.tier, hourlyRateAmount: facilityPriceRule.hourlyRateAmount })
+      .from(facilityPriceRule)
+      .where(eq(facilityPriceRule.facilityId, court.id));
+    const quote = quoteBooking({ startsAt: zonedToUtc(s.date, s.startTime, club.timezone)!, endsAt: zonedToUtc(s.date, s.endTime, club.timezone)!, timeZone: club.timezone, standardRate: court.rate, rules });
+    price = splitShare(quote.total, max);
+  }
 
   let studentId: string | null = null;
   if (s.studentEmail) {
@@ -62,6 +78,7 @@ export async function createSession(_prev: ActionState, formData: FormData): Pro
     if (item?.clubId !== club.clubId) return fail("equipmentId", "Pick equipment from the same club as the facility");
   }
 
+  let createdId = "";
   try {
     await db.transaction(async (tx) => {
       const [created] = await tx
@@ -77,11 +94,14 @@ export async function createSession(_prev: ActionState, formData: FormData): Pro
           startsAt,
           endsAt,
           maxParticipants: max,
-          priceAmount: s.price ?? 0,
+          minLevel: s.minLevel,
+          maxLevel: s.maxLevel,
+          priceAmount: price,
           currency: club.currency,
           coachShareBps: coachShareFor(club),
         })
         .returning({ id: practiceSession.id });
+      createdId = created!.id;
       if (s.equipmentId && s.equipmentQuantity) {
         await tx.insert(equipmentBooking).values({
           clubId: club.clubId,
@@ -102,6 +122,8 @@ export async function createSession(_prev: ActionState, formData: FormData): Pro
     throw e;
   }
   revalidateCoach("", "/students");
+  // Tell students who asked for alerts, after the response is sent.
+  if (s.kind === "OPEN_MATCH") after(() => notifyMatchAlerts(createdId));
   return { ok: `Scheduled “${s.title}” at ${club.name} · ${court.name}, ${s.date} ${minuteToTime(s.startTime)}–${minuteToTime(s.endTime)}.` };
 }
 

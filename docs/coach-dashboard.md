@@ -59,6 +59,13 @@ Outside the court's opening hours, in the past, and nonexistent local times
 from the roster: the freelance commission, or 0 for club employees, who are
 paid wages.
 
+## Open matches
+
+An open match can carry a level range (e.g. 3.0–4.0). With no price, each
+player pays an equal share of the court's price for that slot. Students at a
+fitting level who prefer the club get an email alert; they join and pay from
+their dashboard (see [student-dashboard.md](student-dashboard.md)).
+
 ## Public booking
 
 - Slots come from the weekly windows (club time zone), cut into session-length

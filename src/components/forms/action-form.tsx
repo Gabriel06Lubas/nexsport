@@ -172,6 +172,7 @@ export function ActionButton({
   pendingLabel,
   variant = "outline",
   confirm,
+  disabled,
 }: {
   action: Action;
   hidden: Record<string, string>;
@@ -179,6 +180,8 @@ export function ActionButton({
   pendingLabel?: string;
   variant?: "primary" | "outline" | "ghost";
   confirm?: string;
+  /** Keep the button (and its last message) on screen after it has done its job. */
+  disabled?: boolean;
 }) {
   const [state, formAction, pending] = useActionState(action, {});
   return (
@@ -192,7 +195,7 @@ export function ActionButton({
       {Object.entries(hidden).map(([name, value]) => (
         <input key={name} type="hidden" name={name} value={value} />
       ))}
-      <Button type="submit" size="sm" variant={variant} disabled={pending} className="h-8 px-3 text-xs">
+      <Button type="submit" size="sm" variant={variant} disabled={pending || disabled} className="h-8 px-3 text-xs">
         {pending ? (pendingLabel ?? "…") : children}
       </Button>
       {(state.error || state.ok) && (

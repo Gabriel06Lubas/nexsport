@@ -52,7 +52,7 @@ export function canOpenSection(grant: ClubGrant, section: ClubSection): boolean 
  * Slugs that can't name a club: they are static routes under /dashboard
  * (Next.js matches those before /dashboard/[clubSlug]), or would read as one.
  */
-export const reservedClubSlugs = new Set(["club", "coach", "athlete", "settings", "admin", "new", "api", "login", "onboarding"]);
+export const reservedClubSlugs = new Set(["club", "coach", "athlete", "student", "settings", "admin", "new", "api", "login", "onboarding"]);
 
 export const clubSlugPattern = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
