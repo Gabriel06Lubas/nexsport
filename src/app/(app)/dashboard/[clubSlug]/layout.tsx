@@ -4,7 +4,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { Badge } from "@/components/ui/badge";
-import { ClubNav } from "@/modules/clubs/components/club-nav";
+import { SectionNav } from "@/components/dashboard/section-nav";
 import { listManagedClubs, requireClubAccess } from "@/modules/clubs/dal";
 import { canOpenSection, clubSections } from "@/modules/clubs/lib/permissions";
 
@@ -16,7 +16,7 @@ export default async function ClubLayout({ children, params }: { children: React
   const { clubSlug } = await params;
   const access = await requireClubAccess(clubSlug);
   const clubs = await listManagedClubs(access.user.id);
-  const items = clubSections.filter((s) => canOpenSection(access, s.key)).map(({ key, path, label }) => ({ key, path, label }));
+  const items = clubSections.filter((s) => canOpenSection(access, s.key)).map(({ key, path, label }) => ({ path, label, icon: key }));
   const { club } = access;
 
   return (
@@ -64,7 +64,7 @@ export default async function ClubLayout({ children, params }: { children: React
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[220px_minmax(0,1fr)] lg:gap-10">
         <aside className="lg:sticky lg:top-24 lg:self-start">
-          <ClubNav slug={club.slug} items={items} />
+          <SectionNav label="Club" base={`/dashboard/${club.slug}`} items={items} />
         </aside>
         <div className="min-w-0">{children}</div>
       </div>

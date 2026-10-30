@@ -69,6 +69,9 @@ export const equipmentBookingStatus = pgEnum("EquipmentBookingStatus", ["RESERVE
 
 // ---- Scheduling -------------------------------------------------------------
 
+/** What kind of coached session: one-to-one, a group class, or an open match players join. */
+export const sessionKind = pgEnum("SessionKind", ["PRIVATE", "GROUP", "OPEN_MATCH"]);
+
 export const sessionStatus = pgEnum("SessionStatus", ["DRAFT", "SCHEDULED", "IN_PROGRESS", "COMPLETED", "CANCELLED"]);
 
 export const participantStatus = pgEnum("ParticipantStatus", [
@@ -218,6 +221,7 @@ export type UserRole = (typeof userRole.enumValues)[number];
 export type ClubRole = (typeof clubRole.enumValues)[number];
 export type SessionStatus = (typeof sessionStatus.enumValues)[number];
 export type SubscriptionTier = (typeof subscriptionTier.enumValues)[number];
+export type SessionKind = (typeof sessionKind.enumValues)[number];
 export type ClubPermission = (typeof clubPermission.enumValues)[number];
 export type ClubStatus = (typeof clubStatus.enumValues)[number];
 export type FacilityType = (typeof facilityType.enumValues)[number];

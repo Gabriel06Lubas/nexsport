@@ -62,7 +62,7 @@ DELETE FROM "FacilityBooking" WHERE id LIKE 'race_%';
 DELETE FROM "PracticeSession" WHERE id LIKE 'race_%';
 INSERT INTO "PracticeSession" (id, "clubId", "facilityId", "coachId", "sportId", "createdById", title, "startsAt", "endsAt", "maxParticipants", "updatedAt") VALUES
   ('race_s1', 'race_c', 'race_f1', 'race_u', 'race_sp', 'race_u', '1', '2031-01-01 10:00Z', '2031-01-01 11:00Z', 1, now()),
-  ('race_s2', 'race_c', 'race_f2', 'race_u', 'race_sp', 'race_u', '2', '2031-01-01 10:00Z', '2031-01-01 11:00Z', NULL, now());
+  ('race_s2', 'race_c', 'race_f2', 'race_s2', 'race_sp', 'race_s2', '2', '2031-01-01 10:00Z', '2031-01-01 11:00Z', NULL, now());
 SQL
   for i in 1 2; do
     # Each transaction takes its snapshot first, then waits so both overlap.

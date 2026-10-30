@@ -105,6 +105,9 @@ sessions: `kind` says which, and a CHECK makes sure exactly the matching
 target column is set. Composite foreign keys make sure a rental or pass is
 paid to the club that owns it.
 
+Credits used at the desk are also written to `PassCreditAdjustment`, the
+ledger coaches write to (see [coach-dashboard.md](coach-dashboard.md#credits)).
+
 ## Tests
 
 ```bash

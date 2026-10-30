@@ -4,7 +4,7 @@ import { and, count, eq, gt, isNotNull, isNull, lt, lte, sql } from "drizzle-orm
 
 import { db } from "@/db";
 import { isUniqueViolation } from "@/db/errors";
-import { clubMember, memberPass, membershipPlan, user } from "@/db/schema";
+import { clubMember, memberPass, membershipPlan, passCreditAdjustment, user } from "@/db/schema";
 import { formValues, invalid, type ActionState } from "@/lib/action-state";
 
 import { idOnly, membershipPlanSchema, sellPassSchema } from "../lib/forms";
@@ -140,21 +140,29 @@ export async function redeemCredit(_prev: ActionState, formData: FormData): Prom
   const parsed = idOnly("passId").safeParse(formValues(formData));
   if (!parsed.success) return { error: "Unknown pass." };
   // One atomic statement: two check-ins at once can't spend the same credit.
-  const updated = await db
-    .update(memberPass)
-    .set({ creditsUsed: sql`${memberPass.creditsUsed} + 1` })
-    .where(
-      and(
-        eq(memberPass.id, String(parsed.data.passId)),
-        eq(memberPass.clubId, access.club.id),
-        isNull(memberPass.cancelledAt),
-        isNotNull(memberPass.creditsTotal),
-        lt(memberPass.creditsUsed, memberPass.creditsTotal),
-        lte(memberPass.startsAt, sql`now()`),
-        gt(memberPass.expiresAt, sql`now()`),
-      ),
-    )
-    .returning({ used: memberPass.creditsUsed, total: memberPass.creditsTotal });
+  // The ledger row is written in the same transaction.
+  const passId = String(parsed.data.passId);
+  const updated = await db.transaction(async (tx) => {
+    const rows = await tx
+      .update(memberPass)
+      .set({ creditsUsed: sql`${memberPass.creditsUsed} + 1` })
+      .where(
+        and(
+          eq(memberPass.id, passId),
+          eq(memberPass.clubId, access.club.id),
+          isNull(memberPass.cancelledAt),
+          isNotNull(memberPass.creditsTotal),
+          lt(memberPass.creditsUsed, memberPass.creditsTotal),
+          lte(memberPass.startsAt, sql`now()`),
+          gt(memberPass.expiresAt, sql`now()`),
+        ),
+      )
+      .returning({ used: memberPass.creditsUsed, total: memberPass.creditsTotal });
+    if (rows.length > 0) {
+      await tx.insert(passCreditAdjustment).values({ clubId: access.club.id, passId, delta: 1, reason: "Used at the desk", actorId: access.user.id });
+    }
+    return rows;
+  });
   if (updated.length === 0) return { error: "No credits left on that pass, or it isn't valid today." };
   const [{ used, total }] = updated as [{ used: number; total: number }];
   revalidateClub(access, SECTION);

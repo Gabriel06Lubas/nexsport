@@ -12,6 +12,7 @@ import {
   participantStatus,
   paymentMethod,
   priceTier,
+  sessionKind,
   sessionStatus,
 } from "./enums";
 
@@ -24,6 +25,8 @@ import {
 //     non-cancelled sessions never overlap on one facility.
 //   * Triggers capping equipment units and session seats, and moving
 //     equipment bookings when a session is rescheduled or cancelled.
+// in drizzle/0008_coach_guards.sql:
+//   * PracticeSession_coach_no_overlap: a coach is never in two sessions at once.
 // and in drizzle/0006_club_guards.sql:
 //   * FacilityBooking_no_overlap and FacilityPriceRule_no_overlap (exclusion).
 //   * A trigger keeping court rentals and coached sessions apart on the same
@@ -42,6 +45,7 @@ export const practiceSession = pgTable(
     createdById: text().notNull(),
     title: text().notNull(),
     description: text(),
+    kind: sessionKind().notNull().default("GROUP"),
     startsAt: tstz().notNull(),
     endsAt: tstz().notNull(),
     status: sessionStatus().notNull().default("SCHEDULED"),

@@ -50,6 +50,20 @@
       "when": 1793363158592,
       "tag": "0006_club_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793390287440,
+      "tag": "0007_coach_dashboard",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793390288472,
+      "tag": "0008_coach_guards",
+      "breakpoints": true
     }
   ]
 }

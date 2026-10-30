@@ -1,6 +1,6 @@
 "use client";
 
-import { Building2, CalendarDays, CreditCard, IdCard, LayoutDashboard, Menu, Users, X } from "lucide-react";
+import { Building2, CalendarClock, CalendarDays, CreditCard, IdCard, LayoutDashboard, Link2, Menu, Users, Wallet, X } from "lucide-react";
 import type { Route } from "next";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -8,18 +8,25 @@ import { useState } from "react";
 
 import { cn } from "@/lib/utils";
 
-import type { ClubSection } from "../lib/permissions";
+// Sidebar on large screens, a collapsible menu on small ones. Shared by the
+// club and coach dashboards. Icons are named (functions can't be passed from
+// a server component to a client one).
 
-const icons: Record<ClubSection, typeof LayoutDashboard> = {
+const icons = {
   overview: LayoutDashboard,
   facilities: Building2,
   staff: Users,
   memberships: IdCard,
   schedule: CalendarDays,
   billing: CreditCard,
-};
+  sessions: CalendarClock,
+  students: Users,
+  availability: Link2,
+  earnings: Wallet,
+} as const;
 
-export type NavItem = { key: ClubSection; path: string; label: string };
+export type NavIcon = keyof typeof icons;
+export type NavItem = { path: string; label: string; icon: NavIcon };
 
 function NavLinks({ base, items, onNavigate }: { base: string; items: NavItem[]; onNavigate?: () => void }) {
   const pathname = usePathname();
@@ -28,9 +35,9 @@ function NavLinks({ base, items, onNavigate }: { base: string; items: NavItem[];
       {items.map((item) => {
         const href = `${base}${item.path}`;
         const active = item.path === "" ? pathname === base : pathname === href || pathname.startsWith(`${href}/`);
-        const Icon = icons[item.key];
+        const Icon = icons[item.icon];
         return (
-          <li key={item.key}>
+          <li key={item.path}>
             <Link
               href={href as Route}
               onClick={onNavigate}
@@ -50,13 +57,12 @@ function NavLinks({ base, items, onNavigate }: { base: string; items: NavItem[];
   );
 }
 
-/** Sidebar on large screens; a collapsible menu on small ones. Only sections the member can open are listed. */
-export function ClubNav({ slug, items }: { slug: string; items: NavItem[] }) {
+export function SectionNav({ label, base, items }: { label: string; base: string; items: NavItem[] }) {
   const [open, setOpen] = useState(false);
-  const base = `/dashboard/${slug}`;
+  const id = `${label.toLowerCase()}-mobile-nav`;
   return (
     <>
-      <nav aria-label="Club" className="hidden lg:block">
+      <nav aria-label={label} className="hidden lg:block">
         <NavLinks base={base} items={items} />
       </nav>
       <div className="lg:hidden">
@@ -64,13 +70,13 @@ export function ClubNav({ slug, items }: { slug: string; items: NavItem[] }) {
           type="button"
           onClick={() => setOpen((o) => !o)}
           aria-expanded={open}
-          aria-controls="club-mobile-nav"
+          aria-controls={id}
           className="flex items-center gap-2 rounded-xl border border-border px-3 py-2 text-sm font-medium"
         >
           {open ? <X className="size-4" aria-hidden /> : <Menu className="size-4" aria-hidden />} Menu
         </button>
         {open && (
-          <nav id="club-mobile-nav" aria-label="Club" className="mt-3 rounded-2xl border border-border bg-card p-2">
+          <nav id={id} aria-label={label} className="mt-3 rounded-2xl border border-border bg-card p-2">
             <NavLinks base={base} items={items} onNavigate={() => setOpen(false)} />
           </nav>
         )}

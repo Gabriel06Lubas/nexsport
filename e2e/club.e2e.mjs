@@ -270,12 +270,14 @@ try {
   check(await said(book, "is open 09:00–21:00"), "bookings outside opening hours are refused");
 
   const clinic = await one(`
-    SELECT to_char("startsAt" AT TIME ZONE 'Europe/Madrid', 'YYYY-MM-DD') AS day FROM "PracticeSession"
-     WHERE "clubId" = 'democlub01' AND status = 'SCHEDULED' AND "startsAt" > now() + interval '2 hours' ORDER BY "startsAt" LIMIT 1`);
-  await book.getByLabel("Facility").selectOption({ label: "Padel Glass Court 1" });
+    SELECT to_char(s."startsAt" AT TIME ZONE 'Europe/Madrid', 'YYYY-MM-DD') AS day, to_char(s."startsAt" AT TIME ZONE 'Europe/Madrid', 'HH24:MI') AS "from",
+           to_char(s."endsAt" AT TIME ZONE 'Europe/Madrid', 'HH24:MI') AS until, f.name AS facility
+      FROM "PracticeSession" s JOIN "Facility" f ON f.id = s."facilityId"
+     WHERE s."clubId" = 'democlub01' AND s.status = 'SCHEDULED' AND s."startsAt" > now() + interval '2 hours' ORDER BY s."startsAt" LIMIT 1`);
+  await book.getByLabel("Facility").selectOption({ label: clinic.facility });
   await book.getByLabel("Date").fill(clinic.day);
-  await book.getByLabel("From").fill("08:30");
-  await book.getByLabel("Until").fill("09:30");
+  await book.getByLabel("From").fill(clinic.from);
+  await book.getByLabel("Until").fill(clinic.until);
   await book.getByLabel("Or walk-in name").fill("E2E Clash");
   await book.getByRole("button", { name: "Book" }).click();
   check(await said(book, "clashes with a coached session"), "a rental over a coached clinic is refused (cross-table guard)");

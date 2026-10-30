@@ -3,7 +3,8 @@
 // admin dashboard has something to show, and gives the first club ("Padel
 // Central") a full operation for the club dashboard: dynamic pricing, four
 // weeks of court rentals, coached sessions split through Stripe Connect,
-// memberships, staff and equipment.
+// memberships, staff and equipment; and gives its head coach (Lucía Romero)
+// private lessons, open matches, attendance and a public booking page.
 //
 // Safe by construction: refuses to run in production or against a
 // non-local database, and only ever touches its own rows (emails ending in
@@ -343,10 +344,10 @@ try {
       const startsAt = local(d, 480);
       const endsAt = local(d, 570);
       await q(
-        `INSERT INTO "PracticeSession"(id, "clubId", "facilityId", "coachId", "sportId", "createdById", title, "startsAt", "endsAt", status,
+        `INSERT INTO "PracticeSession"(id, "clubId", "facilityId", "coachId", "sportId", "createdById", title, kind, "startsAt", "endsAt", status,
            "maxParticipants", "priceAmount", "coachShareBps", "updatedAt")
-         VALUES ($1, $2, 'demofac011', $3, $4, 'demoowner01', $5, $6, $7, 'SCHEDULED', 4, 2500, $8, now())`,
-        [sessionId, clubId, coachId, sportId, ["Morning clinic", "Technique drills", "Match play"][sessionNo % 3], startsAt, endsAt, share],
+         VALUES ($1, $2, 'demofac011', $3, $4, 'demoowner01', $5, $9, $6, $7, 'SCHEDULED', 4, 2500, $8, now())`,
+        [sessionId, clubId, coachId, sportId, ["Morning clinic", "Technique drills", "Match play"][sessionNo % 3], startsAt, endsAt, share, sessionNo % 3 === 2 ? "OPEN_MATCH" : "GROUP"],
       );
       if (d >= 0) continue;
       for (const athleteId of athletes.slice(sessionNo % 3, (sessionNo % 3) + 2 + (sessionNo % 2))) {
@@ -356,6 +357,81 @@ try {
       }
       await q(`UPDATE "PracticeSession" SET status = 'COMPLETED' WHERE id = $1`, [sessionId]);
     }
+
+    // Coach dashboard: Lucía Romero (democoach01), freelance at Padel Central.
+    // Private lessons Tue/Thu 10:00-11:00 on court 1 (clinics end at 09:30 and
+    // court 1 is only rented from 17:00), and open matches on alternate
+    // Saturdays at noon. Past ones are paid and completed, except the most
+    // recent private lesson, left for her to wrap up.
+    {
+      let lessonNo = 0;
+      const lastPast = (() => {
+        for (let d = -1; d >= -7; d--) if ([2, 4].includes(dowOf(d))) return d;
+        return -1;
+      })();
+      for (let d = -60; d <= 14; d++) {
+        const dow = dowOf(d);
+        const lesson = dow === 2 || dow === 4;
+        const match = dow === 6 && Math.abs(d) % 14 < 7;
+        if (!lesson && !match) continue;
+        lessonNo++;
+        const id = `demolesson${String(lessonNo).padStart(3, "0")}`;
+        const startsAt = local(d, lesson ? 600 : 720);
+        const endsAt = local(d, lesson ? 660 : 810);
+        const players = lesson ? [athletes[lessonNo % 3]] : athletes.slice(lessonNo % 3, (lessonNo % 3) + 4);
+        const price = lesson ? 4000 : 1500;
+        await q(
+          `INSERT INTO "PracticeSession"(id, "clubId", "facilityId", "coachId", "sportId", "createdById", title, kind, "startsAt", "endsAt", status,
+             "maxParticipants", "priceAmount", "coachShareBps", "updatedAt")
+           VALUES ($1, $2, 'demofac011', 'democoach01', $3, 'democoach01', $4, $5, $6, $7, 'SCHEDULED', $8, $9, 7000, now())`,
+          [id, clubId, sportId, lesson ? "Private lesson" : "Saturday open match", lesson ? "PRIVATE" : "OPEN_MATCH", startsAt, endsAt, lesson ? 1 : 4, price],
+        );
+        for (const athleteId of players) {
+          const participantId = `${id}${athleteId.slice(-2)}`;
+          await q(`INSERT INTO "SessionParticipant"(id, "sessionId", "userId", status, "updatedAt") VALUES ($1, $2, $3, 'ACCEPTED', now())`, [participantId, id, athleteId]);
+          if (d < 0) await onlinePayment({ kind: "SESSION", target: id, participantId, payerId: athleteId, amount: price, paidAt: startsAt, coachId: "democoach01", coachShareBps: 7000 });
+        }
+        if (d < 0 && d !== lastPast) await q(`UPDATE "PracticeSession" SET status = 'COMPLETED' WHERE id = $1`, [id]);
+      }
+
+      await q(
+        `INSERT INTO "CoachProfile"("userId", slug, headline, bio, "bookingEnabled", timezone, "sportId", "privateRateAmount", "groupRateAmount",
+           "sessionMinutes", "minNoticeHours", "maxAdvanceDays", "updatedAt")
+         VALUES ('democoach01', 'lucia-romero', 'Padel coach · ex-pro, 12 years teaching', $1, true, 'Europe/Madrid', $2, 4000, 2000, 60, 12, 21, now())`,
+        ["I coach players from first lessons to tournament level: footwork, the bandeja and smart positioning.", sportId],
+      );
+      const windows = [
+        [2, 1020, 1200, null],
+        [4, 1020, 1200, null],
+        [6, 600, 720, "demofac012"],
+      ];
+      for (const [i, [day, start, end, facility]] of windows.entries()) {
+        await q(
+          `INSERT INTO "CoachAvailability"(id, "coachId", "clubId", "facilityId", "dayOfWeek", "startMinute", "endMinute", "updatedAt")
+           VALUES ($1, 'democoach01', $2, $3, $4, $5, $6, now())`,
+          [`demoavail${i + 1}`, clubId, facility, day, start, end],
+        );
+      }
+      // The club assigned her three students.
+      for (const a of [1, 2, 3]) {
+        await q(
+          `INSERT INTO "CoachAssignment"(id, "clubId", "coachMemberId", "studentMemberId", "sportId", "startsOn") VALUES ($1, $2, 'demomembercoach01', $3, $4, current_date - 60)`,
+          [`demoassign${a}`, clubId, `demomemberath${pad(a)}`, sportId],
+        );
+      }
+    }
+
+    // Attendance on every completed session at the club: mostly present.
+    await q(
+      `INSERT INTO "Attendance"(id, "sessionId", "participantId", "userId", status, "checkedInAt", "markedById", "updatedAt")
+       SELECT 'demoatt' || p.id, s.id, p.id, p."userId", x.status::"AttendanceStatus",
+              CASE WHEN x.status = 'ABSENT' THEN NULL ELSE s."startsAt" END, s."coachId", now()
+         FROM "SessionParticipant" p
+         JOIN "PracticeSession" s ON s.id = p."sessionId"
+         CROSS JOIN LATERAL (SELECT CASE WHEN abs(hashtext(p.id)) % 100 < 7 THEN 'ABSENT' WHEN abs(hashtext(p.id)) % 100 < 15 THEN 'LATE' ELSE 'PRESENT' END AS status) x
+        WHERE s."clubId" = $1 AND s.status = 'COMPLETED' AND p.status = 'ACCEPTED'`,
+      [clubId],
+    );
 
     // Court rentals: 90-minute slots, busiest on weekday evenings and weekend
     // mornings. Court 1 is only rented from 17:00 (mornings are clinics).
@@ -466,4 +542,5 @@ try {
 
 console.log("Demo data ready: 6 clubs, 5 independent coaches, 6 athletes, payments, disputes and webhook events.");
 console.log("Club dashboard: sign in as owner01@demo.nexport.test (Padel Central) or staff01@demo.nexport.test (front desk).");
+console.log("Coach dashboard: sign in as coach01@demo.nexport.test (booking page: /coach/lucia-romero).");
 console.log("Admins aren't seeded; see docs/admin.md to create yours.");

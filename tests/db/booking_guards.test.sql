@@ -7,6 +7,8 @@ BEGIN;
 INSERT INTO "User" (id, email, role, "updatedAt") VALUES
   ('u_owner', 'owner@test.dev', 'CLUB_OWNER', now()),
   ('u_coach', 'coach@test.dev', 'COACH', now()),
+  ('u_coach2', 'coach2@test.dev', 'COACH', now()),
+  ('u_coach3', 'coach3@test.dev', 'COACH', now()),
   ('u_s1', 's1@test.dev', 'STUDENT', now()),
   ('u_s2', 's2@test.dev', 'STUDENT', now());
 INSERT INTO "Club" (id, slug, name, country, "ownerId", "updatedAt")
@@ -71,10 +73,11 @@ SELECT pg_temp.expect_ok('facility: slot reusable after cancellation', $q$
   INSERT INTO "PracticeSession" (id,"clubId","facilityId","coachId","sportId","createdById",title,"startsAt","endsAt","updatedAt")
      VALUES ('s_d','c1','f1','u_coach','sp_padel','u_coach','D','2030-01-01 11:00Z','2030-01-01 12:00Z',now())$q$);
 
--- Equipment guard (s_a 10-11, s_d 11-12; add s_e 10:30-11:30 on another facility)
+-- Equipment guard (s_a 10-11, s_d 11-12; add s_e 10:30-11:30 on another
+-- facility, with another coach: one coach can't be in two sessions at once)
 INSERT INTO "Facility" (id, "clubId", name, type, "updatedAt") VALUES ('f2', 'c1', 'Court 2', 'PADEL_COURT', now());
 INSERT INTO "PracticeSession" (id,"clubId","facilityId","coachId","sportId","createdById",title,"startsAt","endsAt","updatedAt")
-  VALUES ('s_e','c1','f2','u_coach','sp_padel','u_coach','E','2030-01-01 10:30Z','2030-01-01 11:30Z',now());
+  VALUES ('s_e','c1','f2','u_coach2','sp_padel','u_coach2','E','2030-01-01 10:30Z','2030-01-01 11:30Z',now());
 
 SELECT pg_temp.expect_ok('equipment: 6 of 10 balls reserved',
   $q$INSERT INTO "EquipmentBooking" (id,"clubId","equipmentId","sessionId",quantity,"startsAt","endsAt","updatedAt")
@@ -98,7 +101,7 @@ SELECT pg_temp.expect_violation('equipment: stock reduction below reservations r
   'EquipmentBooking_capacity');
 INSERT INTO "Facility" (id, "clubId", name, type, "updatedAt") VALUES ('f3', 'c1', 'Court 3', 'PADEL_COURT', now());
 INSERT INTO "PracticeSession" (id,"clubId","facilityId","coachId","sportId","createdById",title,"startsAt","endsAt","updatedAt")
-  VALUES ('s_f','c1','f3','u_coach','sp_padel','u_coach','F','2030-01-01 13:00Z','2030-01-01 14:00Z',now());
+  VALUES ('s_f','c1','f3','u_coach3','sp_padel','u_coach3','F','2030-01-01 13:00Z','2030-01-01 14:00Z',now());
 -- Machine booked with 15 min setup padding before the session.
 INSERT INTO "EquipmentBooking" (id,"clubId","equipmentId","sessionId",quantity,"startsAt","endsAt","updatedAt")
   VALUES ('eb7','c1','e_machine','s_f',1,'2030-01-01 12:45Z','2030-01-01 14:00Z',now());
