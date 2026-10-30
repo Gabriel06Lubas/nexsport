@@ -1,11 +1,19 @@
 import { sql } from "drizzle-orm";
-import { char, check, integer, pgTable, text, unique } from "drizzle-orm/pg-core";
+import { char, check, integer, pgTable, smallint, text, unique } from "drizzle-orm/pg-core";
 
 import { createdAt, fk, id, idx, tstz, uniq, updatedAt } from "../columns";
 import { user } from "./auth";
 import { cancellationPolicy } from "./billing";
 import { ageGroup, club, equipment, facility, sport } from "./clubs";
-import { attendanceStatus, equipmentBookingStatus, participantStatus, sessionStatus } from "./enums";
+import {
+  attendanceStatus,
+  equipmentBookingStatus,
+  facilityBookingStatus,
+  participantStatus,
+  paymentMethod,
+  priceTier,
+  sessionStatus,
+} from "./enums";
 
 // =============================================================================
 // SCHEDULING
@@ -16,6 +24,10 @@ import { attendanceStatus, equipmentBookingStatus, participantStatus, sessionSta
 //     non-cancelled sessions never overlap on one facility.
 //   * Triggers capping equipment units and session seats, and moving
 //     equipment bookings when a session is rescheduled or cancelled.
+// and in drizzle/0006_club_guards.sql:
+//   * FacilityBooking_no_overlap and FacilityPriceRule_no_overlap (exclusion).
+//   * A trigger keeping court rentals and coached sessions apart on the same
+//     facility ("Facility_booking_overlap").
 // =============================================================================
 
 export const practiceSession = pgTable(
@@ -155,5 +167,90 @@ export const equipmentBooking = pgTable(
     fk("EquipmentBooking", [t.sessionId, t.clubId], [practiceSession.id, practiceSession.clubId]).onDelete("cascade"),
     check("EquipmentBooking_quantity_positive", sql`"quantity" > 0`),
     check("EquipmentBooking_time_order", sql`"endsAt" > "startsAt"`),
+  ],
+);
+
+/**
+ * Dynamic pricing: the hourly rate of a facility in one time window of one
+ * weekday (in the club's time zone). Time not covered by a rule is charged
+ * at Facility.hourlyRateAmount. Windows of one facility and day can't
+ * overlap ("FacilityPriceRule_no_overlap", migration 0006).
+ */
+export const facilityPriceRule = pgTable(
+  "FacilityPriceRule",
+  {
+    id: id(),
+    clubId: text().notNull(),
+    facilityId: text().notNull(),
+    /** ISO weekday: 1 = Monday … 7 = Sunday. */
+    dayOfWeek: smallint().notNull(),
+    /** Minutes after local midnight, on a 15-minute grid. */
+    startMinute: integer().notNull(),
+    endMinute: integer().notNull(),
+    tier: priceTier().notNull(),
+    /** Minor units per hour. */
+    hourlyRateAmount: integer().notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    idx("FacilityPriceRule", t.facilityId, t.dayOfWeek),
+    idx("FacilityPriceRule", t.clubId),
+    fk("FacilityPriceRule", [t.clubId], [club.id]).onDelete("cascade"),
+    fk("FacilityPriceRule", [t.facilityId, t.clubId], [facility.id, facility.clubId]).onDelete("cascade"),
+    check("FacilityPriceRule_day_of_week", sql`"dayOfWeek" BETWEEN 1 AND 7`),
+    check(
+      "FacilityPriceRule_window",
+      sql`"startMinute" >= 0 AND "startMinute" < "endMinute" AND "endMinute" <= 1440 AND "startMinute" % 15 = 0 AND "endMinute" % 15 = 0`,
+    ),
+    check("FacilityPriceRule_rate_non_negative", sql`"hourlyRateAmount" >= 0`),
+  ],
+);
+
+/**
+ * A court / field rental: someone books the facility itself, without a coach
+ * (a padel match, a 5-a-side game). Coached sessions are PracticeSession.
+ * Rentals can't overlap each other or a session on the same facility.
+ */
+export const facilityBooking = pgTable(
+  "FacilityBooking",
+  {
+    id: id(),
+    clubId: text().notNull(),
+    facilityId: text().notNull(),
+    /** Registered customer, or null for a walk-in recorded by name. */
+    customerId: text(),
+    customerName: text(),
+    bookedById: text(),
+    startsAt: tstz().notNull(),
+    endsAt: tstz().notNull(),
+    status: facilityBookingStatus().notNull().default("CONFIRMED"),
+    /** Price quoted from the dynamic pricing rules when booked (minor units). */
+    priceAmount: integer().notNull(),
+    currency: char({ length: 3 }).notNull().default("eur"),
+    paymentMethod: paymentMethod().notNull(),
+    /** On-site / complimentary: when the desk collected it. Online: Stripe success. */
+    paidAt: tstz(),
+    notes: text(),
+    cancelledAt: tstz(),
+    cancelledById: text(),
+    cancellationReason: text(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    unique("FacilityBooking_id_clubId_key").on(t.id, t.clubId),
+    idx("FacilityBooking", t.clubId, t.startsAt),
+    idx("FacilityBooking", t.facilityId, t.startsAt),
+    idx("FacilityBooking", t.customerId),
+    fk("FacilityBooking", [t.clubId], [club.id]).onDelete("cascade"),
+    fk("FacilityBooking", [t.facilityId, t.clubId], [facility.id, facility.clubId]).onDelete("restrict"),
+    fk("FacilityBooking", [t.customerId], [user.id]).onDelete("set null"),
+    fk("FacilityBooking", [t.bookedById], [user.id]).onDelete("set null"),
+    fk("FacilityBooking", [t.cancelledById], [user.id]).onDelete("set null"),
+    check("FacilityBooking_time_order", sql`"endsAt" > "startsAt"`),
+    check("FacilityBooking_price_non_negative", sql`"priceAmount" >= 0`),
+    check("FacilityBooking_currency_format", sql`"currency" ~ '^[a-z]{3}$'`),
+    check("FacilityBooking_cancellation_consistent", sql`("status" = 'CANCELLED') = ("cancelledAt" IS NOT NULL)`),
   ],
 );

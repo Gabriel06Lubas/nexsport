@@ -36,6 +36,20 @@
       "when": 1793314252240,
       "tag": "0004_seed_subscription_plans",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793363157443,
+      "tag": "0005_club_dashboard",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793363158592,
+      "tag": "0006_club_guards",
+      "breakpoints": true
     }
   ]
 }

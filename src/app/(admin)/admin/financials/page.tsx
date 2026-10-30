@@ -17,7 +17,7 @@ import {
   TableWrap,
   td,
   th,
-} from "@/modules/admin/components/ui";
+} from "@/components/dashboard/ui";
 import { getFinancials, listWebhookEvents } from "@/modules/admin/queries";
 import { requireAdmin } from "@/modules/auth/dal";
 

@@ -6,6 +6,7 @@ import { user } from "./auth";
 import { club } from "./clubs";
 import {
   disputeStatus,
+  paymentKind,
   paymentStatus,
   planAudience,
   refundStatus,
@@ -16,7 +17,8 @@ import {
   transferRecipientType,
   transferStatus,
 } from "./enums";
-import { practiceSession, sessionParticipant } from "./scheduling";
+import { memberPass } from "./memberships";
+import { facilityBooking, practiceSession, sessionParticipant } from "./scheduling";
 
 // =============================================================================
 // BILLING (Stripe Billing for SaaS + Stripe Connect for session payouts)
@@ -147,7 +149,8 @@ export const stripeAccount = pgTable(
 );
 
 /**
- * One customer payment for one session seat (pay-per-session).
+ * One customer payment: a session seat (pay-per-session), a court rental or a
+ * membership pass. `kind` says which; exactly that target column is set.
  *
  * Money flow ("separate charges and transfers"):
  *   amount                  charged to the student
@@ -160,8 +163,11 @@ export const paymentTransaction = pgTable(
   {
     id: id(),
     clubId: text().notNull(),
-    sessionId: text().notNull(),
-    participantId: text().notNull(),
+    kind: paymentKind().notNull().default("SESSION"),
+    sessionId: text(),
+    participantId: text(),
+    facilityBookingId: text(),
+    memberPassId: text(),
     payerId: text().notNull(),
     coachId: text(),
     amount: integer().notNull(),
@@ -210,12 +216,30 @@ export const paymentTransaction = pgTable(
     uniqueIndex("PaymentTransaction_one_live_per_participant")
       .on(t.participantId)
       .where(sql`"status" NOT IN ('CANCELED', 'FAILED')`),
+    uniqueIndex("PaymentTransaction_one_live_per_facility_booking")
+      .on(t.facilityBookingId)
+      .where(sql`"status" NOT IN ('CANCELED', 'FAILED')`),
+    uniqueIndex("PaymentTransaction_one_live_per_member_pass")
+      .on(t.memberPassId)
+      .where(sql`"status" NOT IN ('CANCELED', 'FAILED')`),
+    idx("PaymentTransaction", t.clubId, t.kind, t.paidAt),
     fk("PaymentTransaction", [t.clubId], [club.id]).onDelete("restrict"),
     fk("PaymentTransaction", [t.sessionId], [practiceSession.id]).onDelete("restrict"),
     fk("PaymentTransaction", [t.participantId], [sessionParticipant.id]).onDelete("restrict"),
+    // Composite FKs: a rental or pass can only be paid to the club that owns it.
+    fk("PaymentTransaction", [t.facilityBookingId, t.clubId], [facilityBooking.id, facilityBooking.clubId]).onDelete("restrict"),
+    fk("PaymentTransaction", [t.memberPassId, t.clubId], [memberPass.id, memberPass.clubId]).onDelete("restrict"),
     fk("PaymentTransaction", [t.payerId], [user.id]).onDelete("restrict"),
     fk("PaymentTransaction", [t.coachId], [user.id]).onDelete("set null"),
     fk("PaymentTransaction", [t.cancellationPolicyId], [cancellationPolicy.id]).onDelete("set null"),
+    check(
+      "PaymentTransaction_kind_target",
+      sql`CASE "kind"
+        WHEN 'SESSION' THEN num_nonnulls("sessionId", "participantId") = 2 AND num_nonnulls("facilityBookingId", "memberPassId") = 0
+        WHEN 'COURT_RENTAL' THEN "facilityBookingId" IS NOT NULL AND num_nonnulls("sessionId", "participantId", "memberPassId") = 0
+        WHEN 'MEMBERSHIP' THEN "memberPassId" IS NOT NULL AND num_nonnulls("sessionId", "participantId", "facilityBookingId") = 0
+      END`,
+    ),
     check("PaymentTransaction_amount_positive", sql`"amount" > 0`),
     check("PaymentTransaction_currency_format", sql`"currency" ~ '^[a-z]{3}$'`),
     check("PaymentTransaction_fee_bounds", sql`"applicationFeeAmount" >= 0 AND "applicationFeeAmount" <= "amount"`),

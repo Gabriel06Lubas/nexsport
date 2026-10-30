@@ -17,7 +17,7 @@ import {
   td,
   th,
   TierBadge,
-} from "@/modules/admin/components/ui";
+} from "@/components/dashboard/ui";
 import { getClubDetail, getCoachDetail, type PaymentRow } from "@/modules/admin/queries";
 import { requireAdmin } from "@/modules/auth/dal";
 

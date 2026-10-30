@@ -9,6 +9,7 @@ import {
   clubPermission,
   clubRole,
   clubStatus,
+  employmentType,
   equipmentCondition,
   facilityType,
   surfaceType,
@@ -137,6 +138,12 @@ export const clubMember = pgTable(
     title: text(),
     /** Students are typically placed in an age group / squad. */
     ageGroupId: text(),
+    /** Payroll (STAFF / COACH rows): employee on a wage, or freelancer on commission. */
+    employmentType: employmentType(),
+    /** Employees: hourly wage in minor units. */
+    hourlyWageAmount: integer(),
+    /** Freelance coaches: default share of session revenue (7000 = 70%). */
+    commissionBps: integer(),
     invitedAt: tstz().notNull().defaultNow(),
     joinedAt: tstz(),
     leftAt: tstz(),
@@ -150,6 +157,8 @@ export const clubMember = pgTable(
     fk("ClubMember", [t.clubId], [club.id]).onDelete("cascade"),
     fk("ClubMember", [t.userId], [user.id]).onDelete("cascade"),
     fk("ClubMember", [t.ageGroupId], [ageGroup.id]).onDelete("set null"),
+    check("ClubMember_wage_non_negative", sql`"hourlyWageAmount" IS NULL OR "hourlyWageAmount" >= 0`),
+    check("ClubMember_commission_bps", sql`"commissionBps" IS NULL OR "commissionBps" BETWEEN 0 AND 10000`),
   ],
 );
 
@@ -199,6 +208,9 @@ export const facility = pgTable(
     hourlyRateAmount: integer(),
     /** Turnover buffer enforced by the scheduling service around each booking. */
     bufferMinutes: integer().notNull().default(0),
+    /** Opening hours as minutes after local midnight (club time zone): 420 = 07:00. */
+    openMinute: integer().notNull().default(420),
+    closeMinute: integer().notNull().default(1380),
     isActive: boolean().notNull().default(true),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -213,6 +225,7 @@ export const facility = pgTable(
     check("Facility_capacity_positive", sql`"capacity" IS NULL OR "capacity" > 0`),
     check("Facility_buffer_non_negative", sql`"bufferMinutes" >= 0`),
     check("Facility_rate_non_negative", sql`"hourlyRateAmount" IS NULL OR "hourlyRateAmount" >= 0`),
+    check("Facility_opening_hours", sql`"openMinute" >= 0 AND "openMinute" < "closeMinute" AND "closeMinute" <= 1440`),
   ],
 );
 
@@ -257,5 +270,40 @@ export const equipment = pgTable(
     idx("Equipment", t.clubId, t.category),
     fk("Equipment", [t.clubId], [club.id]).onDelete("cascade"),
     check("Equipment_quantity_non_negative", sql`"quantity" >= 0`),
+  ],
+);
+
+/**
+ * Units of an Equipment line taken out of service for repair. Open entries
+ * (resolvedAt IS NULL) reduce the bookable stock: the booking guards in
+ * drizzle/0006_club_guards.sql subtract them, and refuse to put more units
+ * into maintenance than the line holds.
+ */
+export const equipmentMaintenance = pgTable(
+  "EquipmentMaintenance",
+  {
+    id: id(),
+    clubId: text().notNull(),
+    equipmentId: text().notNull(),
+    quantity: integer().notNull().default(1),
+    /** "Broken frame", "Restringing" */
+    reason: text().notNull(),
+    reportedById: text(),
+    startedAt: tstz().notNull().defaultNow(),
+    resolvedAt: tstz(),
+    resolvedById: text(),
+    resolutionNotes: text(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    idx("EquipmentMaintenance", t.clubId, t.startedAt),
+    idx("EquipmentMaintenance", t.equipmentId, t.resolvedAt),
+    fk("EquipmentMaintenance", [t.clubId], [club.id]).onDelete("cascade"),
+    fk("EquipmentMaintenance", [t.equipmentId, t.clubId], [equipment.id, equipment.clubId]).onDelete("cascade"),
+    fk("EquipmentMaintenance", [t.reportedById], [user.id]).onDelete("set null"),
+    fk("EquipmentMaintenance", [t.resolvedById], [user.id]).onDelete("set null"),
+    check("EquipmentMaintenance_quantity_positive", sql`"quantity" > 0`),
+    check("EquipmentMaintenance_resolution_order", sql`"resolvedAt" IS NULL OR "resolvedAt" >= "startedAt"`),
   ],
 );

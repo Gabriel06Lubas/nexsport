@@ -4,6 +4,7 @@ export * from "./enums";
 export * from "./auth";
 export * from "./clubs";
 export * from "./scheduling";
+export * from "./memberships";
 export * from "./social";
 export * from "./billing";
 export * from "./notifications";

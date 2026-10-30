@@ -14,8 +14,8 @@ import {
   td,
   th,
   TierBadge,
-} from "@/modules/admin/components/ui";
-import { parseListParams, pickParam } from "@/modules/admin/lib/params";
+} from "@/components/dashboard/ui";
+import { parseListParams, pickParam } from "@/lib/list-params";
 import { listTenants } from "@/modules/admin/queries";
 import { requireAdmin } from "@/modules/auth/dal";
 

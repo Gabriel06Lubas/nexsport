@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-// Parsing of admin list URLs (?q=&type=&page=). Search params are user input:
+// Parsing of list URLs (admin and club dashboards) (?q=&type=&page=). Search params are user input:
 // they are validated, clamped and only ever used as bound query parameters.
 
 export const PAGE_SIZE = 20;

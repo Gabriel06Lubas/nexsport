@@ -9,10 +9,29 @@ import {
   stripeAccount,
   subscription,
 } from "./billing";
-import { ageGroup, club, clubMember, clubSport, coachAssignment, equipment, facility, facilitySport, sport } from "./clubs";
+import {
+  ageGroup,
+  club,
+  clubMember,
+  clubSport,
+  coachAssignment,
+  equipment,
+  equipmentMaintenance,
+  facility,
+  facilitySport,
+  sport,
+} from "./clubs";
+import { memberPass, membershipPlan } from "./memberships";
 import { adminAuditLog } from "./admin";
 import { notification } from "./notifications";
-import { attendance, equipmentBooking, practiceSession, sessionParticipant } from "./scheduling";
+import {
+  attendance,
+  equipmentBooking,
+  facilityBooking,
+  facilityPriceRule,
+  practiceSession,
+  sessionParticipant,
+} from "./scheduling";
 import { comment, conversation, conversationParticipant, like, message, post, postMedia } from "./social";
 
 // Relations power Drizzle's relational queries (db.query.*) and Drizzle
@@ -99,6 +118,9 @@ export const clubRelations = relations(club, ({ one, many }) => ({
   stripeAccount: one(stripeAccount),
   payments: many(paymentTransaction),
   notifications: many(notification),
+  facilityBookings: many(facilityBooking),
+  membershipPlans: many(membershipPlan),
+  memberPasses: many(memberPass),
 }));
 
 export const sportRelations = relations(sport, ({ many }) => ({
@@ -151,6 +173,8 @@ export const facilityRelations = relations(facility, ({ one, many }) => ({
   club: one(club, { fields: [facility.clubId], references: [club.id] }),
   sports: many(facilitySport),
   sessions: many(practiceSession),
+  priceRules: many(facilityPriceRule),
+  bookings: many(facilityBooking),
 }));
 
 export const facilitySportRelations = relations(facilitySport, ({ one }) => ({
@@ -161,6 +185,11 @@ export const facilitySportRelations = relations(facilitySport, ({ one }) => ({
 export const equipmentRelations = relations(equipment, ({ one, many }) => ({
   club: one(club, { fields: [equipment.clubId], references: [club.id] }),
   bookings: many(equipmentBooking),
+  maintenance: many(equipmentMaintenance),
+}));
+
+export const equipmentMaintenanceRelations = relations(equipmentMaintenance, ({ one }) => ({
+  equipment: one(equipment, { fields: [equipmentMaintenance.equipmentId], references: [equipment.id] }),
 }));
 
 // ---- Scheduling ---------------------------------------------------------------
@@ -186,6 +215,9 @@ export const practiceSessionRelations = relations(practiceSession, ({ one, many 
   equipmentBookings: many(equipmentBooking),
   payments: many(paymentTransaction),
   notifications: many(notification),
+  facilityBookings: many(facilityBooking),
+  membershipPlans: many(membershipPlan),
+  memberPasses: many(memberPass),
 }));
 
 export const sessionParticipantRelations = relations(sessionParticipant, ({ one, many }) => ({
@@ -290,6 +322,8 @@ export const paymentTransactionRelations = relations(paymentTransaction, ({ one,
     references: [cancellationPolicy.id],
   }),
   transfers: many(paymentTransfer),
+  facilityBooking: one(facilityBooking, { fields: [paymentTransaction.facilityBookingId], references: [facilityBooking.id] }),
+  memberPass: one(memberPass, { fields: [paymentTransaction.memberPassId], references: [memberPass.id] }),
 }));
 
 export const paymentTransferRelations = relations(paymentTransfer, ({ one }) => ({
@@ -323,4 +357,27 @@ export const notificationRelations = relations(notification, ({ one }) => ({
   session: one(practiceSession, { fields: [notification.sessionId], references: [practiceSession.id] }),
   post: one(post, { fields: [notification.postId], references: [post.id] }),
   comment: one(comment, { fields: [notification.commentId], references: [comment.id] }),
+}));
+
+// ---- Court rentals, pricing & memberships ---------------------------------------
+
+export const facilityPriceRuleRelations = relations(facilityPriceRule, ({ one }) => ({
+  facility: one(facility, { fields: [facilityPriceRule.facilityId], references: [facility.id] }),
+}));
+
+export const facilityBookingRelations = relations(facilityBooking, ({ one, many }) => ({
+  club: one(club, { fields: [facilityBooking.clubId], references: [club.id] }),
+  facility: one(facility, { fields: [facilityBooking.facilityId], references: [facility.id] }),
+  payments: many(paymentTransaction),
+}));
+
+export const membershipPlanRelations = relations(membershipPlan, ({ one, many }) => ({
+  club: one(club, { fields: [membershipPlan.clubId], references: [club.id] }),
+  passes: many(memberPass),
+}));
+
+export const memberPassRelations = relations(memberPass, ({ one, many }) => ({
+  club: one(club, { fields: [memberPass.clubId], references: [club.id] }),
+  plan: one(membershipPlan, { fields: [memberPass.planId], references: [membershipPlan.id] }),
+  payments: many(paymentTransaction),
 }));

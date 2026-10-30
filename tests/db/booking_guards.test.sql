@@ -10,9 +10,9 @@ INSERT INTO "User" (id, email, role, "updatedAt") VALUES
   ('u_s1', 's1@test.dev', 'STUDENT', now()),
   ('u_s2', 's2@test.dev', 'STUDENT', now());
 INSERT INTO "Club" (id, slug, name, country, "ownerId", "updatedAt")
-  VALUES ('c1', 'padel-central', 'Padel Central', 'ES', 'u_owner', now()),
-         ('c2', 'other-club', 'Other', 'ES', 'u_owner', now());
-INSERT INTO "Sport" (id, slug, name) VALUES ('sp_padel', 'padel', 'Padel');
+  VALUES ('c1', 'guard-test-club', 'Padel Central', 'ES', 'u_owner', now()),
+         ('c2', 'guard-test-other', 'Other', 'ES', 'u_owner', now());
+INSERT INTO "Sport" (id, slug, name) VALUES ('sp_padel', 'guard-test-padel', 'Padel');
 INSERT INTO "Facility" (id, "clubId", name, type, "updatedAt") VALUES
   ('f1', 'c1', 'Court 1', 'PADEL_COURT', now()),
   ('f_other', 'c2', 'Court X', 'PADEL_COURT', now());

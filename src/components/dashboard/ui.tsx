@@ -5,16 +5,29 @@ import type { ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
 import { cn, formatMoney } from "@/lib/utils";
 
-import { connectLabels, connectState, type ConnectState } from "../lib/connect-status";
-import { pageCount } from "../lib/params";
+import { connectLabels, connectState, type ConnectState } from "@/lib/connect-status";
+import { pageCount } from "@/lib/list-params";
 
-// Small presentational pieces shared by the admin pages.
+// Small presentational pieces shared by the admin and club dashboards.
+// Admin pages show UTC; club pages pass the club's time zone.
 
-const dateFormat = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeZone: "UTC" });
-const dateTimeFormat = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" });
+const formats = new Map<string, Intl.DateTimeFormat>();
+function format(kind: "date" | "dateTime" | "time", timeZone: string) {
+  const key = `${kind}:${timeZone}`;
+  let f = formats.get(key);
+  if (!f) {
+    const style: Intl.DateTimeFormatOptions =
+      kind === "date" ? { dateStyle: "medium" } : kind === "time" ? { timeStyle: "short" } : { dateStyle: "medium", timeStyle: "short" };
+    f = new Intl.DateTimeFormat("en-GB", { ...style, timeZone });
+    formats.set(key, f);
+  }
+  return f;
+}
 
-export const formatDate = (value: Date | string) => dateFormat.format(new Date(value));
-export const formatDateTime = (value: Date | string) => `${dateTimeFormat.format(new Date(value))} UTC`;
+export const formatDate = (value: Date | string, timeZone = "UTC") => format("date", timeZone).format(new Date(value));
+export const formatTime = (value: Date | string, timeZone: string) => format("time", timeZone).format(new Date(value));
+export const formatDateTime = (value: Date | string, timeZone?: string) =>
+  timeZone ? format("dateTime", timeZone).format(new Date(value)) : `${format("dateTime", "UTC").format(new Date(value))} UTC`;
 
 /** "€1,234.00", or "€1,234.00 · $50.00" when several currencies are involved. */
 export function moneyTotals(totals: { currency: string; amount: number }[], empty = "€0.00") {

@@ -2,9 +2,9 @@ import { Building2, CreditCard, Gauge, Landmark, ScrollText, ShieldAlert, UserPl
 import type { Metadata, Route } from "next";
 import Link from "next/link";
 
-import { connectHealthPercent } from "@/modules/admin/lib/connect-status";
+import { connectHealthPercent } from "@/lib/connect-status";
 import { getOverview, getRecentActivity, webhookSummary, type ActivityItem } from "@/modules/admin/queries";
-import { EmptyState, formatDateTime, KpiCard, moneyTotals, PageHeader, Panel } from "@/modules/admin/components/ui";
+import { EmptyState, formatDateTime, KpiCard, moneyTotals, PageHeader, Panel } from "@/components/dashboard/ui";
 import { requireAdmin } from "@/modules/auth/dal";
 
 export const metadata: Metadata = { title: "Overview" };

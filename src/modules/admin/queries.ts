@@ -5,7 +5,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { adminAuditLog, stripeWebhookEvent, subscriptionPlan } from "@/db/schema";
 
-import { escapeLike, PAGE_SIZE } from "./lib/params";
+import { escapeLike, PAGE_SIZE } from "@/lib/list-params";
 
 // Read models for the admin dashboard. Every value that comes from the URL or
 // a form is passed as a bound parameter (Drizzle's sql`` template turns each

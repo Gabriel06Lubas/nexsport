@@ -151,7 +151,11 @@ try {
   check((await kpi("Platform MRR")).includes("€354.00"), "MRR = €354.00 (active + past due; trials and cancelled excluded)");
   check((await kpi("Active tenants")).includes("10") && (await kpi("Active tenants")).includes("5 clubs · 5 coaches (2 pro)"), "active tenants = 10 (5 active clubs + 5 coaches, 2 pro)");
   check((await kpi("Stripe Connect health")).includes("71.4%"), "Connect health = 71.4% (5 of 7 accounts)");
-  check((await kpi("Total volume processed")).includes("€576.00"), "total volume = €576.00 across all clubs");
+  // The seed's club-dashboard data adds rentals, clinics and memberships, so the
+  // expected total comes from the database (all SUCCEEDED payments, before refunds).
+  const { volume } = await one(`SELECT sum(amount)::int AS volume FROM "PaymentTransaction" WHERE status = 'SUCCEEDED'`);
+  const expectedVolume = new Intl.NumberFormat("en-IE", { style: "currency", currency: "EUR" }).format(volume / 100);
+  check((await kpi("Total volume processed")).includes(expectedVolume), `total volume = ${expectedVolume} across all clubs`);
   check(await admin.getByText("Summit Multi-Sport").first().isVisible(), "activity feed shows the newest club signup");
 
   // 3. Tenants table: search, filters, wildcard and injection safety.

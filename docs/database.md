@@ -126,6 +126,12 @@ exclusion constraint and triggers in `0001_booking_guards.sql`. Always use
 
 ## Design notes
 
+- **Club dashboard tables** (migrations `0005`/`0006`): `FacilityPriceRule`,
+  `FacilityBooking`, `MembershipPlan`, `MemberPass`, `EquipmentMaintenance`,
+  payroll columns on `ClubMember`, opening hours on `Facility`, and
+  `PaymentTransaction.kind` for rentals and memberships. Their guards are
+  described in [club-dashboard.md](club-dashboard.md#database-guards).
+
 - **Constraint names are explicit.** Foreign keys, indexes and unique keys
   keep the `<Table>_<cols>_fkey|_idx|_key` names (helpers in
   `src/db/columns.ts`). The guards, the SQL tests and the app's error handling
@@ -133,8 +139,8 @@ exclusion constraint and triggers in `0001_booking_guards.sql`. Always use
 - **IDs** are generated in the app with `cuid2`, as text primary keys.
 - **`updatedAt`** is set by Drizzle on insert and on every update made through
   it (`$onUpdate`). Raw SQL updates must set it themselves.
-- **The three composite-FK targets** (`Facility`, `Equipment`,
-  `PracticeSession` on `(id, clubId)`) are `UNIQUE` constraints rather than
+- **The composite-FK targets** (`Facility`, `Equipment`, `PracticeSession`,
+  `FacilityBooking`, `MembershipPlan`, `MemberPass` on `(id, clubId)`) are `UNIQUE` constraints rather than
   unique indexes. Drizzle Kit adds foreign keys before indexes, so an index
   wouldn't exist yet when the keys referencing it are created.
 - **Descending indexes** use `.desc().nullsFirst()` to match Postgres's

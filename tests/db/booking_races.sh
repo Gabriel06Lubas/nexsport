@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Concurrency test for the booking guards: two transactions race for the same
-# facility slot, the last unit of equipment, and the last seat in a session,
+# facility slot, the last unit of equipment, the last seat in a session, and
+# the same slot from both sides (a court rental against a coached session),
 # at every isolation level. Exactly one of each pair must win.
 #
 # Like the app, workers retry on 40001 serialization_failure: under
@@ -19,6 +20,7 @@ cleanup() {
   "${P[@]}" >/dev/null <<'SQL'
 DELETE FROM "SessionParticipant" WHERE id LIKE 'race_%';
 DELETE FROM "EquipmentBooking" WHERE id LIKE 'race_%';
+DELETE FROM "FacilityBooking" WHERE id LIKE 'race_%';
 DELETE FROM "PracticeSession" WHERE id LIKE 'race_%';
 DELETE FROM "Equipment" WHERE id LIKE 'race_%';
 DELETE FROM "Facility" WHERE id LIKE 'race_%';
@@ -56,6 +58,7 @@ for iso in "READ COMMITTED" "REPEATABLE READ" "SERIALIZABLE"; do
   "${P[@]}" >/dev/null <<'SQL'
 DELETE FROM "SessionParticipant" WHERE id LIKE 'race_%';
 DELETE FROM "EquipmentBooking" WHERE id LIKE 'race_%';
+DELETE FROM "FacilityBooking" WHERE id LIKE 'race_%';
 DELETE FROM "PracticeSession" WHERE id LIKE 'race_%';
 INSERT INTO "PracticeSession" (id, "clubId", "facilityId", "coachId", "sportId", "createdById", title, "startsAt", "endsAt", "maxParticipants", "updatedAt") VALUES
   ('race_s1', 'race_c', 'race_f1', 'race_u', 'race_sp', 'race_u', '1', '2031-01-01 10:00Z', '2031-01-01 11:00Z', 1, now()),
@@ -91,13 +94,34 @@ SELECT pg_sleep(1);
 COMMIT;
 SQL
   done
+  # Rental vs coached session on the same slot (different tables).
+  run_tx <<SQL &
+BEGIN ISOLATION LEVEL $iso;
+SELECT count(*) FROM "PracticeSession";
+SELECT pg_sleep(0.3);
+INSERT INTO "FacilityBooking" (id, "clubId", "facilityId", "customerName", "startsAt", "endsAt", "priceAmount", "paymentMethod", "updatedAt")
+  VALUES ('race_r1', 'race_c', 'race_f2', 'Walk-in', '2031-03-01 10:00Z', '2031-03-01 11:00Z', 2000, 'ON_SITE', now());
+SELECT pg_sleep(1);
+COMMIT;
+SQL
+  run_tx <<SQL &
+BEGIN ISOLATION LEVEL $iso;
+SELECT count(*) FROM "FacilityBooking";
+SELECT pg_sleep(0.3);
+INSERT INTO "PracticeSession" (id, "clubId", "facilityId", "coachId", "sportId", "createdById", title, "startsAt", "endsAt", "updatedAt")
+  VALUES ('race_x1', 'race_c', 'race_f2', 'race_u', 'race_sp', 'race_u', 'x', '2031-03-01 10:30Z', '2031-03-01 11:30Z', now());
+SELECT pg_sleep(1);
+COMMIT;
+SQL
   wait || true
-  read -r fac eq seats < <("${P[@]}" -At -F ' ' -c "
+  read -r fac eq seats rental < <("${P[@]}" -At -F ' ' -c "
     SELECT (SELECT count(*) FROM \"PracticeSession\" WHERE id LIKE 'race_q%'),
            (SELECT count(*) FROM \"EquipmentBooking\" WHERE id LIKE 'race_b%'),
-           (SELECT count(*) FROM \"SessionParticipant\" WHERE id LIKE 'race_p%')")
+           (SELECT count(*) FROM \"SessionParticipant\" WHERE id LIKE 'race_p%'),
+           (SELECT count(*) FROM \"FacilityBooking\" WHERE id LIKE 'race_r%')
+             + (SELECT count(*) FROM \"PracticeSession\" WHERE id LIKE 'race_x%')")
   status=PASS
-  [[ "$fac" == 1 && "$eq" == 1 && "$seats" == 1 ]] || { status=FAIL; fail=1; }
-  printf '%-16s facility=%s equipment=%s seats=%s  %s\n' "$iso" "$fac" "$eq" "$seats" "$status"
+  [[ "$fac" == 1 && "$eq" == 1 && "$seats" == 1 && "$rental" == 1 ]] || { status=FAIL; fail=1; }
+  printf '%-16s facility=%s equipment=%s seats=%s rental-vs-session=%s  %s\n' "$iso" "$fac" "$eq" "$seats" "$rental" "$status"
 done
 exit $fail

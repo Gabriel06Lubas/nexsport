@@ -3,8 +3,8 @@ import Link from "next/link";
 
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { EmptyState, formatDateTime, PageHeader, Pagination, Panel, TableWrap, td, th } from "@/modules/admin/components/ui";
-import { parseListParams, pickParam } from "@/modules/admin/lib/params";
+import { EmptyState, formatDateTime, PageHeader, Pagination, Panel, TableWrap, td, th } from "@/components/dashboard/ui";
+import { parseListParams, pickParam } from "@/lib/list-params";
 import { listAuditLog, listWebhookEvents } from "@/modules/admin/queries";
 import { requireAdmin } from "@/modules/auth/dal";
 

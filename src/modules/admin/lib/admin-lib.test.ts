@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { connectHealthPercent, connectState } from "./connect-status";
-import { escapeLike, parseListParams, pickParam } from "./params";
+import { connectHealthPercent, connectState } from "@/lib/connect-status";
+import { escapeLike, parseListParams, pickParam } from "@/lib/list-params";
 import { moneySchema, percentSchema, planFormSchema } from "./plan-form";
 
 describe("parseListParams", () => {

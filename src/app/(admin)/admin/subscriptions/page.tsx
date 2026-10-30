@@ -2,7 +2,7 @@ import { Info } from "lucide-react";
 import type { Metadata } from "next";
 
 import { PlanEditor } from "@/modules/admin/components/plan-editor";
-import { PageHeader } from "@/modules/admin/components/ui";
+import { PageHeader } from "@/components/dashboard/ui";
 import { listPlans } from "@/modules/admin/queries";
 import { requireAdmin } from "@/modules/auth/dal";
 

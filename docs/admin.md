@@ -41,7 +41,8 @@ admin's next request, and also ends any impersonation they are running.
 npm run db:seed
 ```
 
-Fills a **local** database with 6 clubs, 5 independent coaches, 6 athletes,
+Fills a **local** database with 6 clubs (the first with a full
+[club dashboard](club-dashboard.md) operation), 5 independent coaches, 6 athletes,
 subscriptions, Connect accounts (healthy, restricted, onboarding), 24 paid
 bookings with platform fees, refunds, disputes, failed transfers and webhook
 events. It refuses to run in production or against a non-local host, only
@@ -82,9 +83,9 @@ are on `FREE_COACH`.
 
 ### Suspension
 
-- **Club:** status becomes `SUSPENDED`. Its members keep their accounts.
-  (Enforcing the suspension inside club features belongs to the club
-  dashboard work.)
+- **Club:** status becomes `SUSPENDED`. Its members keep their accounts, and
+  its [club dashboard](club-dashboard.md) turns read-only: a banner, no forms,
+  and every club action refuses on the server.
 - **Coach:** `User.suspendedAt` is set and every session is deleted at once.
   Google/Apple sign-in is refused (`/login?error=Suspended`), and email-code
   sign-in is refused too. Reactivating clears it.
@@ -115,7 +116,9 @@ placeholders). Paid plans start **inactive**: a paid plan can't be active
 without a Stripe Price ID, which the app and a database CHECK both enforce,
 because it couldn't be sold. Stripe Prices can't be edited, so to change what
 new customers pay you create a new Price in Stripe and paste its ID together
-with the new amount. Limits left blank mean unlimited.
+with the new amount. Limits left blank mean unlimited; the club dashboard
+enforces `maxFacilities`, `maxStaff` and `maxAthletes` (see
+[club-dashboard.md](club-dashboard.md)).
 
 ## Tests
 
@@ -146,5 +149,3 @@ Unit tests cover the parsers and status logic
   them in sync is part of Step 4. Saving a plan does not call Stripe.
 - **The public pricing page** (`src/config/pricing.ts`) still has its own copy
   of the plans; it could read `SubscriptionPlan` instead.
-- **Club suspension inside club features**, and limits enforcement
-  (`maxFacilities`, …) when clubs add resources.

@@ -59,6 +59,12 @@ export const surfaceType = pgEnum("SurfaceType", [
 
 export const equipmentCondition = pgEnum("EquipmentCondition", ["NEW", "GOOD", "FAIR", "NEEDS_REPAIR", "RETIRED"]);
 
+/** How a club employs a staff member or coach (payroll). */
+export const employmentType = pgEnum("EmploymentType", [
+  "EMPLOYEE", // paid an hourly wage by the club
+  "FREELANCE", // paid a commission on the sessions they run (Stripe Connect split)
+]);
+
 export const equipmentBookingStatus = pgEnum("EquipmentBookingStatus", ["RESERVED", "CHECKED_OUT", "RETURNED", "CANCELLED"]);
 
 // ---- Scheduling -------------------------------------------------------------
@@ -73,6 +79,12 @@ export const participantStatus = pgEnum("ParticipantStatus", [
   "CANCELLED", // participant cancelled after accepting (refund policy applies)
   "REMOVED", // removed by coach/staff
 ]);
+
+/** Dynamic pricing band for a court/field time window. */
+export const priceTier = pgEnum("PriceTier", ["PEAK", "OFF_PEAK"]);
+
+/** A court/field rental (not a coached session). */
+export const facilityBookingStatus = pgEnum("FacilityBookingStatus", ["CONFIRMED", "CANCELLED"]);
 
 export const attendanceStatus = pgEnum("AttendanceStatus", ["PRESENT", "LATE", "ABSENT", "EXCUSED"]);
 
@@ -149,6 +161,19 @@ export const disputeStatus = pgEnum("DisputeStatus", [
   "LOST",
 ]);
 
+/** What a payment is for; decides which booking column it points at. */
+export const paymentKind = pgEnum("PaymentKind", ["SESSION", "COURT_RENTAL", "MEMBERSHIP"]);
+
+/** How a court rental or membership pass was paid for. */
+export const paymentMethod = pgEnum("PaymentMethod", [
+  "ONLINE", // Stripe checkout; the money is in PaymentTransaction
+  "ON_SITE", // collected at the front desk (cash / card terminal)
+  "COMPLIMENTARY", // free of charge
+]);
+
+/** Membership plan shapes: time-based unlimited access, or a punch card. */
+export const membershipPlanKind = pgEnum("MembershipPlanKind", ["UNLIMITED", "CREDITS"]);
+
 export const transferRecipientType = pgEnum("TransferRecipientType", ["CLUB", "COACH"]);
 
 export const transferStatus = pgEnum("TransferStatus", ["PENDING", "PAID", "REVERSED", "FAILED"]);
@@ -193,3 +218,13 @@ export type UserRole = (typeof userRole.enumValues)[number];
 export type ClubRole = (typeof clubRole.enumValues)[number];
 export type SessionStatus = (typeof sessionStatus.enumValues)[number];
 export type SubscriptionTier = (typeof subscriptionTier.enumValues)[number];
+export type ClubPermission = (typeof clubPermission.enumValues)[number];
+export type ClubStatus = (typeof clubStatus.enumValues)[number];
+export type FacilityType = (typeof facilityType.enumValues)[number];
+export type SurfaceType = (typeof surfaceType.enumValues)[number];
+export type EquipmentCondition = (typeof equipmentCondition.enumValues)[number];
+export type EmploymentType = (typeof employmentType.enumValues)[number];
+export type PriceTier = (typeof priceTier.enumValues)[number];
+export type PaymentKind = (typeof paymentKind.enumValues)[number];
+export type PaymentMethod = (typeof paymentMethod.enumValues)[number];
+export type MembershipPlanKind = (typeof membershipPlanKind.enumValues)[number];

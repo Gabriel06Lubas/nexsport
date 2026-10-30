@@ -17,6 +17,8 @@
   --lime-foreground: #0b1220;
   --accent-text: #4d6b00; /* readable lime-family text on light surfaces */
   --chart-1: #5a7d00; /* validated: lightness band + 3:1 vs card */
+  --chart-2: #2a78d6; /* chart-1..3 validated together (CVD, adjacent order 1-2-3) */
+  --chart-3: #eb6834;
   --danger: #b42318;
   --danger-soft: #fdecea;
   --success: #067647;
@@ -40,6 +42,8 @@
     --lime-foreground: #0b1220;
     --accent-text: #c8f031;
     --chart-1: #7fa31a;
+    --chart-2: #3987e5;
+    --chart-3: #d95926;
     --danger: #f97066;
     --danger-soft: #3a1414;
     --success: #47cd89;
@@ -63,6 +67,8 @@
   --lime-foreground: #0b1220;
   --accent-text: #c8f031;
   --chart-1: #7fa31a;
+  --chart-2: #3987e5;
+  --chart-3: #d95926;
   --danger: #f97066;
   --danger-soft: #3a1414;
   --success: #47cd89;
@@ -85,6 +91,8 @@
   --color-lime-foreground: var(--lime-foreground);
   --color-accent-text: var(--accent-text);
   --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
   --color-danger: var(--danger);
   --color-danger-soft: var(--danger-soft);
   --color-success: var(--success);
