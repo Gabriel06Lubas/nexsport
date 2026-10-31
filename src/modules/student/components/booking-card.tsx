@@ -1,4 +1,6 @@
 import { MapPin, Navigation } from "lucide-react";
+import type { Route } from "next";
+import Link from "next/link";
 
 import { formatTime } from "@/components/dashboard/ui";
 import { ActionButton } from "@/components/forms/action-form";
@@ -89,22 +91,30 @@ export function BookingCard({ booking: b, policy, now = new Date() }: { booking:
       </div>
 
       <div className="mt-3 flex flex-wrap items-start gap-2">
-        {pendingPayment && (
-          <ActionButton action={payHeldSeat} hidden={{ paymentId: b.paymentId! }} variant="primary" pendingLabel="Opening Stripe…">
-            Pay now
-          </ActionButton>
-        )}
+        {pendingPayment &&
+          (b.kind === "rental" ? (
+            <Link
+              href={`/dashboard/student/book?resume=${b.paymentId}` as Route}
+              className="inline-flex h-8 items-center rounded-full bg-ink px-3 text-xs font-semibold text-ink-foreground hover:opacity-90"
+            >
+              Pay now
+            </Link>
+          ) : (
+            <ActionButton action={payHeldSeat} hidden={{ paymentId: b.paymentId! }} variant="primary" pendingLabel="Opening Stripe…">
+              Pay now
+            </ActionButton>
+          ))}
         {upcoming && (
           // Rendered (disabled) after cancelling too, so its confirmation and
           // refund message stay on screen when the card turns "Cancelled".
           <ActionButton
             action={cancelMyBooking}
             hidden={{ kind: b.kind, id: b.id }}
-            confirm={pendingPayment ? "Release this spot?" : refund ? `Cancel this booking? ${refund.text}` : "Cancel this booking?"}
+            confirm={pendingPayment ? (b.kind === "rental" ? "Release this court?" : "Release this spot?") : refund ? `Cancel this booking? ${refund.text}` : "Cancel this booking?"}
             pendingLabel="Cancelling…"
             disabled={b.status === "CANCELLED"}
           >
-            {b.status === "CANCELLED" ? "Cancelled" : pendingPayment ? "Release spot" : "Cancel booking"}
+            {b.status === "CANCELLED" ? "Cancelled" : pendingPayment ? (b.kind === "rental" ? "Release court" : "Release spot") : "Cancel booking"}
           </ActionButton>
         )}
         {b.status !== "CANCELLED" && (

@@ -13,7 +13,7 @@ Auth.js v5 (RBAC) · Tailwind + shadcn/ui · Stripe Billing + Stripe Connect
 | 1 | [Database schema, booking guards](docs/step-1-database.md) | ✅ |
 | 2 | [Sign-in (Google, Apple, email code), email verification, sessions, RBAC](docs/step-2-auth.md) | ✅ |
 | 3 | Modular App Router + `modules/*` layout | ⏳ |
-| 4 | Scheduling service + Stripe Connect PaymentIntents | ⏳ |
+| 4 | [Stripe payments](docs/payments.md): court bookings (PaymentIntent destination charges), seat checkout, webhooks, refunds | ✅ (Connect onboarding and payouts ⏳) |
 | — | [Admin dashboard](docs/admin.md): KPIs, tenants, plans, financials, logs, impersonation | ✅ |
 | — | [Club dashboard](docs/club-dashboard.md): analytics, courts & dynamic pricing, equipment, bookings, memberships, staff & payroll, billing | ✅ |
 | — | [Coach dashboard](docs/coach-dashboard.md): schedule, students & credits, public booking link, earnings | ✅ |

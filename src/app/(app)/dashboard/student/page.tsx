@@ -88,9 +88,14 @@ export default async function StudentOverviewPage({ searchParams }: { searchPara
           <h2 id="schedule" className="text-lg font-semibold">
             Next 30 days
           </h2>
-          <Link href="/dashboard/student/open-matches" className="text-sm font-medium text-accent-text hover:underline">
-            Find a match
-          </Link>
+          <span className="flex gap-3">
+            <Link href="/dashboard/student/book" className="text-sm font-medium text-accent-text hover:underline">
+              Book a court
+            </Link>
+            <Link href="/dashboard/student/open-matches" className="text-sm font-medium text-accent-text hover:underline">
+              Find a match
+            </Link>
+          </span>
         </div>
         {feed.length === 0 ? (
           <EmptyState>Nothing booked yet. Join an open match or book a coach.</EmptyState>

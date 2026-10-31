@@ -87,7 +87,11 @@ export const participantStatus = pgEnum("ParticipantStatus", [
 export const priceTier = pgEnum("PriceTier", ["PEAK", "OFF_PEAK"]);
 
 /** A court/field rental (not a coached session). */
-export const facilityBookingStatus = pgEnum("FacilityBookingStatus", ["CONFIRMED", "CANCELLED"]);
+export const facilityBookingStatus = pgEnum("FacilityBookingStatus", [
+  "PENDING", // held while the customer pays online; blocks the slot like a confirmed booking
+  "CONFIRMED",
+  "CANCELLED",
+]);
 
 export const attendanceStatus = pgEnum("AttendanceStatus", ["PRESENT", "LATE", "ABSENT", "EXCUSED"]);
 

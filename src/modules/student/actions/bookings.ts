@@ -29,20 +29,30 @@ export async function cancelMyBooking(_prev: ActionState, formData: FormData): P
   if (!booking || booking.status === "CANCELLED") return { error: "That booking is already cancelled." };
   if (booking.startsAt.getTime() <= Date.now()) return { error: "It has already started, so it can't be cancelled here." };
 
-  // A seat still waiting for payment: release it, nothing to refund.
+  // A seat or court still waiting for payment: release it, nothing to refund.
   if (booking.status === "PENDING" && booking.paymentId && booking.paymentStatus === "REQUIRES_PAYMENT_METHOD") {
     const [payment] = await db
-      .select({ checkoutId: paymentTransaction.stripeCheckoutSessionId })
+      .select({ checkoutId: paymentTransaction.stripeCheckoutSessionId, intentId: paymentTransaction.stripePaymentIntentId })
       .from(paymentTransaction)
       .where(eq(paymentTransaction.id, booking.paymentId));
+    // Stop Stripe from taking the money later. Best effort: if this fails and
+    // the payment still completes, the webhook refunds it.
     const stripe = getStripe();
     if (stripe && payment?.checkoutId) await stripe.checkout.sessions.expire(payment.checkoutId).catch(() => undefined);
+    else if (stripe && payment?.intentId) await stripe.paymentIntents.cancel(payment.intentId).catch(() => undefined);
     await db.transaction(async (tx) => {
       await tx.update(paymentTransaction).set({ status: "CANCELED", checkoutUrl: null }).where(and(eq(paymentTransaction.id, booking.paymentId!), eq(paymentTransaction.status, "REQUIRES_PAYMENT_METHOD")));
-      await tx.update(sessionParticipant).set({ status: "CANCELLED", cancelledAt: sql`now()` }).where(eq(sessionParticipant.id, booking.participantId!));
+      if (booking.kind === "session") {
+        await tx.update(sessionParticipant).set({ status: "CANCELLED", cancelledAt: sql`now()` }).where(eq(sessionParticipant.id, booking.participantId!));
+      } else {
+        await tx
+          .update(facilityBooking)
+          .set({ status: "CANCELLED", cancelledAt: sql`now()`, cancelledById: student.id, cancellationReason: "Released before paying" })
+          .where(and(eq(facilityBooking.id, booking.id), eq(facilityBooking.status, "PENDING")));
+      }
     });
     revalidatePath("/dashboard/student", "layout");
-    return { ok: "Spot released. You weren't charged." };
+    return { ok: booking.kind === "session" ? "Spot released. You weren't charged." : "Court released. You weren't charged." };
   }
 
   const policy = await loadPolicy(booking.clubId, booking.policyId);
@@ -94,7 +104,7 @@ export async function cancelMyBooking(_prev: ActionState, formData: FormData): P
   const [payment] = await db.select({ intent: paymentTransaction.stripePaymentIntentId, refunded: paymentTransaction.refundedAmount, amount: paymentTransaction.amount }).from(paymentTransaction).where(eq(paymentTransaction.id, booking.paymentId!));
   if (stripe && payment?.intent) {
     try {
-      await refundPayment(stripe, { paymentId: booking.paymentId!, paymentIntentId: payment.intent, amount: decision.refundAmount });
+      await refundPayment(stripe, { paymentId: booking.paymentId!, paymentIntentId: payment.intent, amount: decision.refundAmount, destinationCharge: booking.kind === "rental" });
       const total = payment.refunded + decision.refundAmount;
       await db
         .update(paymentTransaction)

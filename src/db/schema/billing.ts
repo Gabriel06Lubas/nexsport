@@ -180,7 +180,7 @@ export const paymentTransaction = pgTable(
     /** cs_…: the Checkout Session collecting this payment, while one is open. */
     stripeCheckoutSessionId: text(),
     checkoutUrl: text(),
-    /** The seat is held until then; an unpaid hold is released afterwards. */
+    /** The seat or court is held until then; an unpaid hold is released afterwards. */
     checkoutExpiresAt: tstz(),
     stripeChargeId: text(),
     /** Stripe `transfer_group`, ties the charge to its downstream transfers. */

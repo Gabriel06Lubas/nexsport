@@ -8,6 +8,7 @@ The old `/dashboard/athlete` link redirects there.
 | `/dashboard/student` | **Overview & upcoming**: session passes, upcoming count, memberships; the next 30 days with Confirmed / Pending / Cancelled, Cancel, Pay now and Get directions |
 | `/dashboard/student/bookings` | **Bookings & passes**: upcoming (with refund countdowns), past and cancelled bookings; the clubs' cancellation rules; passes, purchases, expiry and credit history |
 | `/dashboard/student/open-matches` | **Open match finder**: level-matched open matches with filled slots; join and pay your share through Stripe Checkout |
+| `/dashboard/student/book` | **Book a court**: pick a court and time, pay with Stripe's Payment Element (see [payments.md](payments.md)) |
 | `/dashboard/student/settings` | **Account & payments**: saved cards and the Stripe customer portal, billing history, playing level per sport, preferred clubs, notification switches |
 
 On phones the sections are a tab bar at the bottom; on large screens, a sidebar.
@@ -21,7 +22,7 @@ npm run db:seed && npm run dev
 Sign in as `athlete01@demo.nexport.test` (level 3.5 padel, a monthly membership,
 court rentals and private lessons) or `athlete02@demo.nexport.test` (a 10-session
 punch card with 6 left). To try paying, set test-mode Stripe keys (see
-`.env.example`) and run `stripe listen --forward-to localhost:3000/api/stripe/webhook`.
+`.env.example`) and run `stripe listen --forward-to localhost:3000/api/webhooks/stripe`.
 
 ## Access
 
@@ -67,7 +68,7 @@ punch card with 6 left). To try paying, set test-mode Stripe keys (see
      35 minutes.
   3. The student pays their share in Stripe Checkout. The Checkout Session
      expires at the same moment as the hold.
-  4. `POST /api/stripe/webhook` (signature checked, each event processed once)
+  4. `POST /api/webhooks/stripe` (signature checked, each event processed once)
      marks the payment `SUCCEEDED`, and queues transfers to the club and the
      coach (their Connect accounts) for the split.
   5. If checkout expires, is abandoned and released, or the expiry webhook is
@@ -91,7 +92,7 @@ blocked by email.
   `AUTH_URL`, never from the request's Host header.
 - `settle.ts`: what the webhook does to our rows. Every update is conditional
   on the state it moves from, so retries are harmless.
-- `/api/stripe/webhook`: verifies `Stripe-Signature` with
+- `/api/webhooks/stripe`: verifies `Stripe-Signature` with
   `STRIPE_WEBHOOK_SECRET`, records the event in `StripeWebhookEvent` (the
   admin's log), skips events already processed, and returns 500 on failure
   so Stripe retries.
@@ -131,7 +132,8 @@ the forms (`src/modules/student/lib/student-lib.test.ts`).
 - **Stripe Connect payouts:** transfers are queued (`PENDING`) when a seat is
   paid. Executing them with Stripe's Transfers API, and Connect onboarding,
   are still to do.
-- **Other online payments:** court rentals and passes are bought at the desk;
-  self-booked private lessons are paid at the club.
+- **Other online payments:** passes are bought at the desk; self-booked
+  private lessons are paid at the club. (Courts are paid online: see
+  [payments.md](payments.md).)
 - **Booking-update emails:** the switch is stored; the emails aren't sent yet.
 - **Students posting matches:** open matches are posted by coaches.

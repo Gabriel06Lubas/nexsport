@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { formatMoney } from "@/lib/utils";
 import { cancelBooking, createBooking, markBookingPaid } from "@/modules/clubs/actions/schedule";
 import { requireClubSection } from "@/modules/clubs/dal";
+import { releaseExpiredHolds } from "@/modules/payments/settle";
 import { listFacilities } from "@/modules/clubs/queries/facilities";
 import { getSchedule, type ScheduleItem } from "@/modules/clubs/queries/schedule";
 import { addDays, zonedParts, zonedToUtc } from "@/modules/clubs/lib/zoned-time";
@@ -31,6 +32,8 @@ export default async function SchedulePage({ params, searchParams }: { params: P
   const from = zonedToUtc(date, 0, tz)!;
   const to = zonedToUtc(addDays(date, 1), 0, tz)!;
 
+  // Free courts held by online payments that were never completed.
+  await releaseExpiredHolds();
   const [facilities, items] = await Promise.all([listFacilities(club.id), getSchedule(club.id, from, to)]);
   const active = facilities.filter((f) => f.isActive);
   const base = `/dashboard/${club.slug}/schedule`;
@@ -121,6 +124,7 @@ function BookingRow({ item, tz, money, slug, writable }: { item: ScheduleItem; t
           </span>{" "}
           <Badge variant={item.kind === "session" ? "neutral" : "lime"}>{item.kind === "session" ? "Coached session" : "Court rental"}</Badge>
           {cancelled && <Badge variant="outline" className="ml-1">Cancelled</Badge>}
+          {item.status === "PENDING" && <Badge variant="warning" className="ml-1">Payment pending</Badge>}
         </p>
         <p className="mt-0.5 text-sm">{item.title}</p>
         <p className="text-xs text-muted-foreground">
@@ -129,7 +133,15 @@ function BookingRow({ item, tz, money, slug, writable }: { item: ScheduleItem; t
             <>
               {item.detail && " · "}
               {money(item.priceAmount)} ·{" "}
-              {item.paymentMethod === "COMPLIMENTARY" ? "complimentary" : item.paymentMethod === "ONLINE" ? "paid online" : item.paidAt ? "paid at desk" : "to collect"}
+              {item.status === "PENDING"
+                ? "held, awaiting online payment"
+                : item.paymentMethod === "COMPLIMENTARY"
+                  ? "complimentary"
+                  : item.paymentMethod === "ONLINE"
+                    ? "paid online"
+                    : item.paidAt
+                      ? "paid at desk"
+                      : "to collect"}
             </>
           )}
         </p>

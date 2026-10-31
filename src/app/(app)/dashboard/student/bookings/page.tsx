@@ -5,7 +5,7 @@ import Link from "next/link";
 import { EmptyState, formatDate, formatTime, PageHeader, Pagination, Panel, StatusBadge, TableWrap, td, th } from "@/components/dashboard/ui";
 import { Badge } from "@/components/ui/badge";
 import { db } from "@/db";
-import { paymentTransaction } from "@/db/schema";
+import { facilityBooking, paymentTransaction } from "@/db/schema";
 import { parseListParams, pickParam } from "@/lib/list-params";
 import { cn, formatMoney } from "@/lib/utils";
 import { BookingCard, bookingDay } from "@/modules/student/components/booking-card";
@@ -27,17 +27,24 @@ export default async function BookingsPage({ searchParams }: { searchParams: Sea
   const scope = pickParam(sp.scope, SCOPES, "upcoming");
   const { page } = parseListParams(sp);
   const paymentParam = typeof sp.payment === "string" && /^[a-z0-9]{1,64}$/.test(sp.payment) ? sp.payment : null;
+  const bookingParam = typeof sp.booking === "string" && /^[a-z0-9]{1,64}$/.test(sp.booking) ? sp.booking : null;
 
-  const [{ list, total }, passes, history, returned] = await Promise.all([
+  const [{ list, total }, passes, history, returned, court] = await Promise.all([
     listMyBookings(student.id, { scope, page }),
     listMyPasses(student.id),
     listMyCreditHistory(student.id),
     sp.checkout === "success" && paymentParam
       ? db.select({ status: paymentTransaction.status, amount: paymentTransaction.amount, currency: paymentTransaction.currency }).from(paymentTransaction).where(and(eq(paymentTransaction.id, paymentParam), eq(paymentTransaction.payerId, student.id)))
       : Promise.resolve([]),
+    // Back from Stripe after paying for a court (Stripe adds redirect_status).
+    bookingParam
+      ? db.select({ status: facilityBooking.status, failure: paymentTransaction.failureMessage }).from(facilityBooking).leftJoin(paymentTransaction, eq(paymentTransaction.facilityBookingId, facilityBooking.id)).where(and(eq(facilityBooking.id, bookingParam), eq(facilityBooking.customerId, student.id)))
+      : Promise.resolve([]),
   ]);
   const policyFor = await loadPolicies(list.map((b) => ({ clubId: b.clubId, policyId: b.policyId })));
   const payment = returned[0];
+  const courtBooking = court[0];
+  const courtConfirming = courtBooking?.status === "PENDING" && sp.redirect_status !== "failed";
   // The policies behind the bookings listed, one line per club/policy.
   const seen = new Set<string>();
   const policies = list.flatMap((b) => {
@@ -52,7 +59,11 @@ export default async function BookingsPage({ searchParams }: { searchParams: Sea
 
   return (
     <div className="space-y-8">
-      <PageHeader title="Bookings & passes" description="Every court, lesson and match you've booked, what cancelling would refund, and your session passes." />
+      <PageHeader title="Bookings & passes" description="Every court, lesson and match you've booked, what cancelling would refund, and your session passes.">
+        <Link href="/dashboard/student/book" className="inline-flex h-9 items-center rounded-full bg-ink px-4 text-sm font-semibold text-ink-foreground hover:opacity-90">
+          Book a court
+        </Link>
+      </PageHeader>
 
       {payment && (
         <p role="status" className={cn("rounded-2xl border px-4 py-3 text-sm", payment.status === "SUCCEEDED" ? "border-success/30 bg-success-soft" : "border-border bg-card")}>
@@ -62,6 +73,19 @@ export default async function BookingsPage({ searchParams }: { searchParams: Sea
             : confirming
               ? "Confirming your payment with Stripe…"
               : "That payment didn't go through."}
+        </p>
+      )}
+
+      {courtBooking && (
+        <p role="status" className={cn("rounded-2xl border px-4 py-3 text-sm", courtBooking.status === "CONFIRMED" ? "border-success/30 bg-success-soft" : "border-border bg-card")}>
+          <RefreshWhile active={courtConfirming} />
+          {courtBooking.status === "CONFIRMED"
+            ? "Court booked and paid. See you on court!"
+            : courtConfirming
+              ? "Confirming your payment with Stripe…"
+              : courtBooking.status === "PENDING"
+                ? `The payment didn't go through${courtBooking.failure ? ` (${courtBooking.failure})` : ""}. Pay now on the booking below, or release the court.`
+                : "This booking was released."}
         </p>
       )}
 

@@ -87,10 +87,65 @@ export async function createSeatCheckout(
   return { id: session.id, url: session.url };
 }
 
-export async function refundPayment(stripe: Stripe, input: { paymentId: string; paymentIntentId: string; amount: number }) {
+/**
+ * Refunds a payment. For a destination charge (court rentals: the money went
+ * straight to the club's connected account), the transfer and the platform
+ * fee are reversed in proportion, so the club and nexport give back their
+ * parts instead of the platform paying the whole refund.
+ */
+export async function refundPayment(stripe: Stripe, input: { paymentId: string; paymentIntentId: string; amount: number; destinationCharge?: boolean }) {
   return stripe.refunds.create(
-    { payment_intent: input.paymentIntentId, amount: input.amount, reason: "requested_by_customer", metadata: { paymentId: input.paymentId } },
+    {
+      payment_intent: input.paymentIntentId,
+      amount: input.amount,
+      reason: "requested_by_customer",
+      metadata: { paymentId: input.paymentId },
+      ...(input.destinationCharge ? { reverse_transfer: true, refund_application_fee: true } : {}),
+    },
     { idempotencyKey: `refund-${input.paymentId}-${input.amount}` },
+  );
+}
+
+/** How long an unpaid court booking holds its slot. */
+export const COURT_HOLD_MINUTES = 15;
+
+/**
+ * A PaymentIntent for a court booking, as a destination charge: the customer
+ * pays the club's connected account directly (on its behalf, so the club is
+ * the merchant of record), and nexport keeps `applicationFee`. Stripe's
+ * processing fee comes out of nexport's fee, so the club receives exactly
+ * amount − applicationFee.
+ */
+export async function createCourtPaymentIntent(
+  stripe: Stripe,
+  input: {
+    paymentId: string;
+    bookingId: string;
+    clubId: string;
+    customerId: string;
+    destination: string;
+    amount: number;
+    applicationFee: number;
+    currency: string;
+    description: string;
+    receiptEmail: string;
+  },
+) {
+  return stripe.paymentIntents.create(
+    {
+      amount: input.amount,
+      currency: input.currency,
+      customer: input.customerId,
+      automatic_payment_methods: { enabled: true },
+      application_fee_amount: input.applicationFee,
+      transfer_data: { destination: input.destination },
+      on_behalf_of: input.destination,
+      transfer_group: `booking_${input.bookingId}`,
+      description: input.description,
+      receipt_email: input.receiptEmail,
+      metadata: { paymentId: input.paymentId, facilityBookingId: input.bookingId, clubId: input.clubId },
+    },
+    { idempotencyKey: `pi-${input.paymentId}` },
   );
 }
 

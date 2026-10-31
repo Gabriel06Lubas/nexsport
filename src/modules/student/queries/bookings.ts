@@ -10,7 +10,7 @@ import { rows } from "@/modules/clubs/queries/shared";
 //
 // Status shown to the student:
 //   * Confirmed: in the session / rental, nothing outstanding;
-//   * Pending: a seat held while an online payment is open, or an invitation;
+//   * Pending: a seat or court held while an online payment is open, or an invitation;
 //   * Cancelled: by the student, the coach or the club.
 
 export type MyBooking = {
@@ -72,10 +72,10 @@ const mine = (userId: string) => sql`
   SELECT 'rental', b.id, NULL, NULL, 'Court rental', b."startsAt", b."endsAt",
          c.id, c.name, concat_ws(', ', c."addressLine1", c."postalCode"), c.city, c.country, c.timezone,
          f.name, NULL,
-         CASE WHEN b.status = 'CANCELLED' THEN 'CANCELLED' ELSE 'CONFIRMED' END,
+         CASE WHEN b.status = 'CANCELLED' THEN 'CANCELLED' WHEN b.status = 'PENDING' THEN 'PENDING' ELSE 'CONFIRMED' END,
          (b.status = 'CANCELLED' AND b."cancelledById" = ${userId}),
          b."priceAmount", b.currency, NULL,
-         pt.id, pt.status::text, pt.amount, NULL, NULL,
+         pt.id, pt.status::text, pt.amount, NULL, pt."checkoutExpiresAt",
          pt."refundStatus"::text, pt."refundedAmount", pt."appliedRefundPercent", b."paymentMethod"::text, COALESCE(pt."paidAt", b."paidAt")
     FROM "FacilityBooking" b
     JOIN "Club" c ON c.id = b."clubId"
@@ -86,8 +86,10 @@ const mine = (userId: string) => sql`
    WHERE b."customerId" = ${userId}`;
 
 const scopeFilter = (scope: BookingScope) =>
+  // Upcoming keeps upcoming cancellations (shown as Cancelled), so a booking
+  // doesn't vanish, with its refund message, the moment it's cancelled.
   scope === "upcoming"
-    ? sql`b."endsAt" > now() AND b.status <> 'CANCELLED'`
+    ? sql`b."endsAt" > now()`
     : scope === "past"
       ? sql`b."endsAt" <= now() AND b.status <> 'CANCELLED'`
       : scope === "cancelled"

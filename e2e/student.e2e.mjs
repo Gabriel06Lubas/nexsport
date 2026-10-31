@@ -63,12 +63,40 @@ const WEBHOOK_SECRET = "whsec_e2e_student";
 const signer = new Stripe("sk_test_e2e");
 const stripeCalls = [];
 const checkouts = new Map();
+const intents = new Map();
+// Stands in for https://js.stripe.com/<train>/stripe.js: a card field, and
+// confirmPayment through the mock, which sends the payment_intent.* webhooks.
+const FAKE_STRIPE_JS = `
+window.Stripe = function () {
+  let secret = null, input = null;
+  return {
+    _registerWrapper() {},
+    elements(opts) {
+      secret = opts.clientSecret;
+      return {
+        create() { return { mount(el) { el.innerHTML = '<label>Card number <input name="card" value="4242424242424242"></label>'; input = el.querySelector('input'); } }; },
+        submit: async () => ({}),
+      };
+    },
+    async confirmPayment({ confirmParams }) {
+      const res = await fetch("${"http://127.0.0.1:12111"}/test/confirm", { method: "POST", body: JSON.stringify({ clientSecret: secret, card: input.value }) });
+      const data = await res.json();
+      if (data.error) return { error: data.error };
+      const url = new URL(confirmParams.return_url);
+      url.searchParams.set("payment_intent", data.id);
+      url.searchParams.set("redirect_status", "succeeded");
+      location.href = url.toString();
+      return new Promise(() => {});
+    },
+  };
+};
+window.Stripe.version = "endive";`;
 let seq = 0;
 let lastWebhook = null;
 async function sendWebhook(type, object) {
   const payload = JSON.stringify({ id: `evt_e2e_${++seq}`, object: "event", type, livemode: false, created: Math.floor(Date.now() / 1000), api_version: "2026-09-30.endive", data: { object } });
   const header = signer.webhooks.generateTestHeaderString({ payload, secret: WEBHOOK_SECRET });
-  const res = await fetch(`${APP}/api/stripe/webhook`, { method: "POST", headers: { "content-type": "application/json", "stripe-signature": header }, body: payload });
+  const res = await fetch(`${APP}/api/webhooks/stripe`, { method: "POST", headers: { "content-type": "application/json", "stripe-signature": header }, body: payload });
   lastWebhook = { payload, header };
   return { status: res.status, payload, header };
 }
@@ -90,6 +118,49 @@ const stripeServer = createServer(async (req, res) => {
     return (res.writeHead(303, { location: cs.success_url }), res.end());
   }
   if (url.pathname === "/portal") return html("<h1>Mock customer portal</h1>");
+  if (req.method === "POST" && url.pathname === "/v1/payment_intents") {
+    const id = `pi_e2e_${++seq}`;
+    const pi = {
+      id,
+      object: "payment_intent",
+      client_secret: `${id}_secret_e2e`,
+      status: "requires_payment_method",
+      amount: Number(form.get("amount")),
+      currency: form.get("currency"),
+      metadata: { paymentId: form.get("metadata[paymentId]"), facilityBookingId: form.get("metadata[facilityBookingId]") },
+      application_fee_amount: Number(form.get("application_fee_amount")),
+      transfer_data: { destination: form.get("transfer_data[destination]") },
+      on_behalf_of: form.get("on_behalf_of"),
+      customer: form.get("customer"),
+      idempotencyKey: req.headers["idempotency-key"],
+    };
+    intents.set(id, pi);
+    return json(200, pi);
+  }
+  const intentPath = url.pathname.match(/^\/v1\/payment_intents\/(pi_e2e_\d+)(\/cancel)?$/);
+  if (intentPath) {
+    const pi = intents.get(intentPath[1]);
+    if (intentPath[2] && req.method === "POST") {
+      pi.status = "canceled";
+      setTimeout(() => sendWebhook("payment_intent.canceled", pi), 50);
+    }
+    return json(200, pi);
+  }
+  if (req.method === "POST" && url.pathname === "/test/confirm") {
+    // Called by the fake Stripe.js in the browser (confirmPayment).
+    const { clientSecret, card } = JSON.parse(body);
+    const pi = [...intents.values()].find((i) => i.client_secret === clientSecret);
+    res.setHeader("access-control-allow-origin", "*");
+    if (!pi || pi.status === "canceled") return json(400, { error: { type: "invalid_request_error", message: "This payment can't be completed." } });
+    if (card.startsWith("4000000000000002")) {
+      const error = { type: "card_error", code: "card_declined", decline_code: "generic_decline", message: "Your card was declined." };
+      await sendWebhook("payment_intent.payment_failed", { ...pi, last_payment_error: error });
+      return json(200, { error });
+    }
+    pi.status = "succeeded";
+    await sendWebhook("payment_intent.succeeded", { ...pi, latest_charge: `ch_e2e_${++seq}` });
+    return json(200, { id: pi.id });
+  }
   if (req.method === "POST" && url.pathname === "/v1/customers") return json(200, { id: `cus_e2e_${++seq}`, object: "customer", email: form.get("email") });
   if (req.method === "POST" && url.pathname === "/v1/checkout/sessions") {
     const id = `cs_e2e_${++seq}`;
@@ -134,6 +205,7 @@ const app = spawn("npx", ["next", "dev", "-p", "3403"], {
     STRIPE_SECRET_KEY: "sk_test_e2e",
     STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET,
     STRIPE_API_BASE: STRIPE,
+    NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: "pk_test_e2e",
   },
   stdio: ["ignore", "pipe", "pipe"],
   detached: true,
@@ -171,6 +243,7 @@ const newContext = async () => {
   // 404s are expected (access checks); anything else is a bug.
   context.on("console", (m) => ["error", "warning"].includes(m.type()) && !m.text().includes("404") && consoleErrors.push(`${m.type()}: ${m.text()}`));
   context.on("weberror", (e) => consoleErrors.push(e.error().message));
+  await context.route("https://js.stripe.com/**", (route) => route.fulfill({ contentType: "application/javascript", body: FAKE_STRIPE_JS }));
   return context;
 };
 
@@ -344,9 +417,114 @@ try {
   check((await matchCard(a4, m2).getByText("Not your level").isVisible()) && (await matchCard(a4, m2).getByRole("button").count()) === 0, "a 2.5 player sees a 3.0–4.0 match marked 'Not your level', without a join button");
 
   // Webhook security.
-  const forged = await fetch(`${APP}/api/stripe/webhook`, { method: "POST", headers: { "stripe-signature": "t=1,v1=deadbeef" }, body: lastWebhook.payload });
-  const replay = await fetch(`${APP}/api/stripe/webhook`, { method: "POST", headers: { "stripe-signature": lastWebhook.header }, body: lastWebhook.payload });
+  const forged = await fetch(`${APP}/api/webhooks/stripe`, { method: "POST", headers: { "stripe-signature": "t=1,v1=deadbeef" }, body: lastWebhook.payload });
+  const replay = await fetch(`${APP}/api/webhooks/stripe`, { method: "POST", headers: { "stripe-signature": lastWebhook.header }, body: lastWebhook.payload });
   check(forged.status === 400 && replay.status === 200 && (await replay.json()).duplicate === true, "forged webhook signatures are rejected; replayed events are acknowledged once and ignored");
+
+  // 5b. Court booking: PaymentIntent destination charge + payment_intent.* webhooks
+  const courtDay = await madridDate(`(now() AT TIME ZONE 'Europe/Madrid')::date + 5`);
+  const bookCourt = async (page, from, until) => {
+    await page.goto(`${APP}${HOME}/book`);
+    const f = form(page, "Book a court");
+    await f.getByLabel("Court").selectOption({ label: "Padel Central · E2E Court (07:00–23:00, from €24.00/h)" });
+    await f.getByLabel("Date").fill(courtDay);
+    await f.getByLabel("From", { exact: true }).fill(from);
+    await f.getByLabel("Until", { exact: true }).fill(until);
+    await f.getByRole("button", { name: "Continue to payment" }).click();
+  };
+  await a1.goto(`${APP}${HOME}/book`);
+  const courtOptions = await form(a1, "Book a court").getByLabel("Court").innerText();
+  check(courtOptions.includes("Padel Central") && !courtOptions.includes("Riverside Racquets") && !courtOptions.includes("Smash Padel Lisboa"), "only clubs whose Connect account can charge and pay out take online bookings");
+
+  await bookCourt(a1, "09:00", "10:30");
+  check(await said(a1, "€36.00 for E2E Court"), "the court is held and priced on the server (1.5 h × €24)");
+  const held = await one(`SELECT b.id AS booking, b.status, pt.id AS payment, pt.status AS "payStatus", pt."stripePaymentIntentId" AS intent, pt."applicationFeeAmount" AS fee
+                            FROM "FacilityBooking" b JOIN "PaymentTransaction" pt ON pt."facilityBookingId" = b.id
+                           WHERE b."customerId" = 'demoathlete01' AND b."facilityId" = 'e2efacstudent' AND b.status = 'PENDING'`);
+  const pi = intents.get(held?.intent);
+  check(
+    held?.status === "PENDING" && held.payStatus === "REQUIRES_PAYMENT_METHOD" && pi?.amount === 3600 && pi.application_fee_amount === 108 && held.fee === 108,
+    "a PENDING booking and its payment are logged; the PaymentIntent charges €36.00 with a 3% application fee (€1.08)",
+  );
+  check(
+    pi?.transfer_data.destination === "acct_demo01" && pi.on_behalf_of === "acct_demo01" && pi.idempotencyKey === `pi-${held.payment}` && pi.customer?.startsWith("cus_e2e_") && pi.metadata.paymentId === held.payment,
+    "…as a destination charge to the club's connected account, with an idempotency key and the payment id in metadata",
+  );
+
+  await a1.getByLabel("Card number").fill("4000000000000002");
+  await a1.getByRole("button", { name: "Pay €36.00" }).click();
+  check(await said(a1, "Your card was declined."), "a declined card shows Stripe's message and can be retried");
+  check(
+    await waitFor(async () => {
+      const r = await one(`SELECT b.status, pt."failureCode" FROM "FacilityBooking" b JOIN "PaymentTransaction" pt ON pt."facilityBookingId" = b.id WHERE b.id = $1`, [held.booking]);
+      return r.status === "PENDING" && r.failureCode === "generic_decline";
+    }),
+    "payment_intent.payment_failed records the decline and keeps the hold for a retry",
+  );
+  await a1.getByLabel("Card number").fill("4242424242424242");
+  await a1.getByRole("button", { name: "Pay €36.00" }).click();
+  check(await said(a1, "Court booked and paid."), "a successful retry returns to Bookings with a confirmation");
+  const done = await one(`
+    SELECT b.status, b."paidAt" IS NOT NULL AS paid, pt.status AS "payStatus", pt."stripeChargeId", pt."failureCode",
+           (SELECT json_build_object('type', "recipientType", 'amount', amount, 'status', status) FROM "PaymentTransfer" WHERE "paymentId" = pt.id) AS transfer
+      FROM "FacilityBooking" b JOIN "PaymentTransaction" pt ON pt."facilityBookingId" = b.id WHERE b.id = $1`, [held.booking]);
+  check(
+    done.status === "CONFIRMED" && done.paid && done.payStatus === "SUCCEEDED" && done.stripeChargeId?.startsWith("ch_e2e_") && done.failureCode === null &&
+      done.transfer?.type === "CLUB" && done.transfer.amount === 3492 && done.transfer.status === "PAID",
+    "payment_intent.succeeded confirms the booking; the club's €34.92 (amount − fee) is recorded as transferred",
+  );
+
+  await bookCourt(a6, "09:30", "10:30");
+  check(await said(a6, "That slot was just taken."), "an overlapping booking is refused");
+
+  // Two players, one slot, same instant.
+  await Promise.all([bookCourt(a1, "11:00", "12:00"), bookCourt(a6, "11:00", "12:00")]);
+  const [h1, h6] = await Promise.all([a1, a6].map((p) => p.getByText("€24.00 for E2E Court").waitFor({ timeout: 10_000 }).then(() => true, () => false)));
+  const taken = (await a1.getByText("That slot was just taken.").count()) + (await a6.getByText("That slot was just taken.").count());
+  check(Number(h1) + Number(h6) === 1 && taken === 1, "two players booking the same slot at once: one gets the hold, the other is told it's taken");
+  const winner = h1 ? a1 : a6;
+  const raced = await one(`SELECT b.id, pt."stripePaymentIntentId" AS intent FROM "FacilityBooking" b JOIN "PaymentTransaction" pt ON pt."facilityBookingId" = b.id
+                            WHERE b."facilityId" = 'e2efacstudent' AND b.status = 'PENDING'`);
+  await winner.goto(`${APP}${HOME}/bookings`);
+  await winner.getByRole("article").filter({ hasText: "E2E Court" }).filter({ hasText: "Pending" }).getByRole("button", { name: "Release court" }).click();
+  check(await said(winner, "Court released. You weren't charged."), "the holder releases an unpaid court");
+  check(
+    (await one(`SELECT status FROM "FacilityBooking" WHERE id = $1`, [raced.id])).status === "CANCELLED" && stripeCalls.some((c) => c.path === `/v1/payment_intents/${raced.intent}/cancel`),
+    "…the slot is free and the PaymentIntent is cancelled at Stripe",
+  );
+
+  // An expired hold, then a payment arriving anyway: refunded, reversing the transfer and the fee.
+  await bookCourt(a6, "13:00", "14:00");
+  await a6.getByText("€24.00 for E2E Court").waitFor();
+  const late = await one(`SELECT b.id, pt."stripePaymentIntentId" AS intent FROM "FacilityBooking" b JOIN "PaymentTransaction" pt ON pt."facilityBookingId" = b.id
+                           WHERE b."customerId" = 'demoathlete06' AND b.status = 'PENDING'`);
+  await db.query(`UPDATE "PaymentTransaction" SET "checkoutExpiresAt" = now() - interval '1 minute' WHERE "facilityBookingId" = $1`, [late.id]);
+  await a6.goto(`${APP}${HOME}/open-matches`); // any sweep point
+  check((await one(`SELECT status FROM "FacilityBooking" WHERE id = $1`, [late.id])).status === "CANCELLED", "an unpaid court hold expires and frees the slot");
+  await a6.goto(`${APP}${HOME}/book`); // the page is gone; Stripe confirms anyway
+  await fetch(`${STRIPE}/test/confirm`, { method: "POST", body: JSON.stringify({ clientSecret: intents.get(late.intent).client_secret, card: "4242424242424242" }) });
+  const lateRefund = () => stripeCalls.find((c) => c.path === "/v1/refunds" && c.form.payment_intent === late.intent);
+  check(
+    await waitFor(async () => (await one(`SELECT "refundStatus" FROM "PaymentTransaction" WHERE "facilityBookingId" = $1`, [late.id])).refundStatus === "REFUNDED") &&
+      lateRefund()?.form.amount === "2400" && lateRefund()?.form.reverse_transfer === "true" && lateRefund()?.form.refund_application_fee === "true",
+    "a court paid after its hold expired is refunded in full, reversing the club's transfer and nexport's fee",
+  );
+
+  // Coming back later to pay for a held court.
+  await bookCourt(a1, "15:00", "16:00");
+  await a1.getByText("€24.00 for E2E Court").waitFor();
+  await a1.goto(`${APP}${HOME}`);
+  await a1.getByRole("article").filter({ hasText: "E2E Court" }).filter({ hasText: "Pending" }).getByRole("link", { name: "Pay now" }).click();
+  await a1.getByRole("button", { name: "Pay €24.00" }).click();
+  check(await said(a1, "Court booked and paid."), "a held court can be paid later from its Pay now link");
+
+  // Cancelling the paid court 5 days out: full refund, through the destination charge.
+  await a1.goto(`${APP}${HOME}/bookings`);
+  const paidCard = a1.getByRole("article").filter({ hasText: "E2E Court" }).filter({ hasText: "09:00–10:30" });
+  await paidCard.getByRole("button", { name: "Cancel booking" }).click();
+  check(await said(paidCard, "€36.00 (100%) is on its way back to your card."), "cancelling the paid court refunds it per the policy");
+  const courtRefund = stripeCalls.find((c) => c.path === "/v1/refunds" && c.form.payment_intent === held.intent);
+  check(courtRefund?.form.amount === "3600" && courtRefund.form.reverse_transfer === "true" && courtRefund.form.refund_application_fee === "true", "…reversing the club's transfer and the application fee");
 
   // 6. Settings, cards and the customer portal --------------------------------------
   await a6.goto(`${APP}${HOME}/settings`);

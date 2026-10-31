@@ -362,8 +362,10 @@ try {
     // Coach dashboard: Lucía Romero (democoach01), freelance at Padel Central.
     // Private lessons Tue/Thu 10:00-11:00 on court 1 (clinics end at 09:30 and
     // court 1 is only rented from 17:00), and open matches on alternate
-    // Saturdays at noon. Past ones are paid and completed, except the most
-    // recent private lesson, left for her to wrap up.
+    // Saturdays 15:30-17:00 (after the older demo clinics, which can fall on
+    // a Saturday depending on today's date, and before court 1's evening
+    // rentals). Past ones are paid and completed, except the most recent
+    // private lesson, left for her to wrap up.
     {
       let lessonNo = 0;
       const lastPast = (() => {
@@ -377,8 +379,8 @@ try {
         if (!lesson && !match) continue;
         lessonNo++;
         const id = `demolesson${String(lessonNo).padStart(3, "0")}`;
-        const startsAt = local(d, lesson ? 600 : 720);
-        const endsAt = local(d, lesson ? 660 : 810);
+        const startsAt = local(d, lesson ? 600 : 930);
+        const endsAt = local(d, lesson ? 660 : 1020);
         const players = lesson ? [athletes[lessonNo % 3]] : athletes.slice(lessonNo % 3, (lessonNo % 3) + 4);
         const price = lesson ? 4000 : 1500;
         await q(

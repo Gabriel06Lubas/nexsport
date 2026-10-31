@@ -1,0 +1,1 @@
+ALTER TYPE "public"."FacilityBookingStatus" ADD VALUE 'PENDING' BEFORE 'CONFIRMED';
