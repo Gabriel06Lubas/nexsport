@@ -6,6 +6,7 @@ import { EmptyState, PageHeader, Panel } from "@/components/dashboard/ui";
 import { ActionButton, ActionForm, CheckboxField, CheckboxGroup, Field, FormFooter, SelectField } from "@/components/forms/action-form";
 import { Badge } from "@/components/ui/badge";
 import { centsToInput } from "@/lib/money-input";
+import { getCoachEntitlements } from "@/lib/entitlements";
 import { formatMoney } from "@/lib/utils";
 import { dayLabels, formatDays } from "@/modules/clubs/lib/labels";
 import { minuteToTime } from "@/modules/clubs/lib/zoned-time";
@@ -13,6 +14,7 @@ import { addWindow, deleteWindows, saveProfile } from "@/modules/coaching/action
 import { getCoachClubs, getCoachProfile, requireCoach } from "@/modules/coaching/dal";
 import { getOpenSlots, listWindows } from "@/modules/coaching/queries/booking";
 import { getSessionFormOptions } from "@/modules/coaching/queries/schedule";
+import { openCoachBillingPortal, startCoachProCheckout } from "@/modules/onboarding/actions";
 
 export const metadata: Metadata = { title: "Booking Link & Rates" };
 
@@ -20,11 +22,13 @@ const timeZoneOptions = Intl.supportedValuesOf("timeZone").map((tz) => ({ value:
 const dayOptions = dayLabels.map((label, i) => ({ value: String(i + 1), label }));
 const lengthOptions = ["30", "45", "60", "75", "90", "120"].map((m) => ({ value: m, label: `${m} minutes` }));
 
-export default async function AvailabilityPage() {
+export default async function AvailabilityPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const coach = await requireCoach();
-  const [profile, clubs, windows] = await Promise.all([getCoachProfile(coach), getCoachClubs(coach.id), listWindows(coach.id)]);
+  const [profile, clubs, windows, plan] = await Promise.all([getCoachProfile(coach), getCoachClubs(coach.id), listWindows(coach.id), getCoachEntitlements(coach.id)]);
+  const pro = plan.tier === "PRO_COACH";
+  const cancelled = (await searchParams).checkout === "cancelled";
   const options = await getSessionFormOptions(clubs.map((c) => c.clubId));
-  const slots = profile.bookingEnabled ? await getOpenSlots({ userId: coach.id, sessionMinutes: profile.sessionMinutes, minNoticeHours: profile.minNoticeHours, maxAdvanceDays: profile.maxAdvanceDays }) : [];
+  const slots = profile.bookingEnabled && pro ? await getOpenSlots({ userId: coach.id, sessionMinutes: profile.sessionMinutes, minNoticeHours: profile.minNoticeHours, maxAdvanceDays: profile.maxAdvanceDays }) : [];
   const money = (n: number) => formatMoney(n, profile.currency);
 
   // One row per window shown once for all its weekdays.
@@ -41,10 +45,32 @@ export default async function AvailabilityPage() {
     <div className="space-y-6">
       <PageHeader title="Booking link & rates" description="Your public page where students book private sessions, your weekly hours, and your prices." />
 
+      <Panel title="Your plan" action={<Badge variant={pro ? "success" : "outline"}>{pro ? "Pro Coach" : "Free Coach"}</Badge>}>
+        <div className="flex flex-wrap items-center justify-between gap-4 p-5 text-sm">
+          <div className="space-y-1">
+            {cancelled && <p role="status" className="font-medium">Upgrade cancelled. Nothing was charged.</p>}
+            <p>
+              {pro
+                ? "Unlimited students, your public booking link, credit passes and reminders."
+                : `Up to ${plan.maxStudents ?? 15} active students. Pro Coach adds unlimited students, a public booking link students book you through, and a lower 3% fee.`}
+            </p>
+          </div>
+          {pro ? (
+            <ActionButton action={openCoachBillingPortal} hidden={{}} pendingLabel="Opening Stripe…">
+              Manage billing
+            </ActionButton>
+          ) : (
+            <ActionButton action={startCoachProCheckout} hidden={{ from: "dashboard" }} variant="primary" pendingLabel="Opening checkout…">
+              Upgrade to Pro Coach
+            </ActionButton>
+          )}
+        </div>
+      </Panel>
+
       <Panel
         title="Public booking link"
         action={
-          profile.bookingEnabled ? (
+          profile.bookingEnabled && pro ? (
             <Link href={`/coach/${profile.slug}` as Route} className="inline-flex items-center gap-1.5 text-sm font-medium text-accent-text hover:underline">
               <ExternalLink className="size-4" aria-hidden /> Open page
             </Link>
@@ -66,10 +92,10 @@ export default async function AvailabilityPage() {
             <Field name="maxAdvanceDays" label="Book up to (days ahead)" defaultValue={String(profile.maxAdvanceDays)} inputMode="numeric" />
           </div>
           <Field name="bio" label="About you" defaultValue={profile.bio ?? ""} maxLength={600} />
-          <CheckboxField name="bookingEnabled" label="Students can book me online" hint="Needs a private rate, a sport and at least one availability window" defaultChecked={profile.bookingEnabled} />
+          <CheckboxField name="bookingEnabled" label="Students can book me online" hint={pro ? "Needs a private rate, a sport and at least one availability window" : "Part of Pro Coach"} defaultChecked={profile.bookingEnabled} />
           <FormFooter submit="Save" />
         </ActionForm>
-        {profile.bookingEnabled && (
+        {profile.bookingEnabled && pro && (
           <p className="border-t border-border px-5 py-3 text-xs text-muted-foreground">
             {slots.length} open {slots.length === 1 ? "slot" : "slots"} in the next {profile.maxAdvanceDays} days
             {profile.privateRateAmount !== null && <> · {money(Math.round((profile.privateRateAmount * profile.sessionMinutes) / 60))} per {profile.sessionMinutes}-minute session</>}

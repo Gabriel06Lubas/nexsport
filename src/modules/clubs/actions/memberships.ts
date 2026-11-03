@@ -1,15 +1,16 @@
 "use server";
 
-import { and, count, eq, gt, isNotNull, isNull, lt, lte, sql } from "drizzle-orm";
+import { and, eq, gt, isNotNull, isNull, lt, lte, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import { isUniqueViolation } from "@/db/errors";
 import { clubMember, memberPass, membershipPlan, passCreditAdjustment, user } from "@/db/schema";
 import { formValues, invalid, type ActionState } from "@/lib/action-state";
+import { canAddClubMember } from "@/lib/entitlements";
 
 import { idOnly, membershipPlanSchema, sellPassSchema } from "../lib/forms";
 import { addDays, zonedParts, zonedToUtc } from "../lib/zoned-time";
-import { guardClubWrite, LimitReached, lockClubAndGetLimits, revalidateClub } from "./shared";
+import { guardClubWrite, enforceLimit, LimitReached, revalidateClub } from "./shared";
 
 // Membership plans and the passes sold from them. A pass copies its plan's
 // terms (credits, price, validity) when sold, so editing a plan only changes
@@ -91,19 +92,12 @@ export async function sellPass(_prev: ActionState, formData: FormData): Promise<
   try {
     await db.transaction(async (tx) => {
       // The buyer becomes (or stays) an active student member of the club.
-      const limits = await lockClubAndGetLimits(tx, access.club.id);
       const [membership] = await tx
         .select({ id: clubMember.id, status: clubMember.status })
         .from(clubMember)
         .where(and(eq(clubMember.clubId, access.club.id), eq(clubMember.userId, buyer.id), eq(clubMember.role, "STUDENT")));
       if (membership?.status !== "ACTIVE") {
-        const [{ n = 0 } = {}] = await tx
-          .select({ n: count() })
-          .from(clubMember)
-          .where(and(eq(clubMember.clubId, access.club.id), eq(clubMember.role, "STUDENT"), eq(clubMember.status, "ACTIVE")));
-        if (limits.maxAthletes !== null && n >= limits.maxAthletes) {
-          throw new LimitReached(`Your ${limits.name} plan includes ${limits.maxAthletes} athletes. Upgrade to add more members.`);
-        }
+        enforceLimit(await canAddClubMember(access.club.id, tx));
         if (membership) {
           await tx.update(clubMember).set({ status: "ACTIVE", joinedAt: new Date(), leftAt: null }).where(eq(clubMember.id, membership.id));
         } else {

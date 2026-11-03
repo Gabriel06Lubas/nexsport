@@ -7,6 +7,7 @@ import { db } from "@/db";
 import { isUniqueViolation } from "@/db/errors";
 import { equipment, equipmentBooking, facility, facilityPriceRule, paymentTransaction, practiceSession, sessionParticipant, sport, user } from "@/db/schema";
 import { formValues, invalid, type ActionState } from "@/lib/action-state";
+import { canAddStudent, enforce, EntitlementError, getClubEntitlements } from "@/lib/entitlements";
 import { idOnly } from "@/modules/clubs/lib/forms";
 import { quoteBooking } from "@/modules/clubs/lib/pricing";
 import { minuteToTime, zonedToUtc } from "@/modules/clubs/lib/zoned-time";
@@ -23,6 +24,9 @@ import { coachConflictMessage, revalidateCoach } from "./shared";
 // rental), the coach already busy anywhere, equipment over-allocated, a full
 // session. Everything happens in one transaction, so a refused equipment
 // reservation also undoes the session.
+//
+// Plans: the club's subscription must be active (and Club Enterprise for
+// open matches), and a Free Coach can't take on a 16th private student.
 
 export async function createSession(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const coach = await requireCoach();
@@ -40,6 +44,11 @@ export async function createSession(_prev: ActionState, formData: FormData): Pro
   const club = clubs.find((c) => c.clubId === court?.clubId);
   if (!court || !club || !court.isActive) return fail("facilityId", "Pick a facility at one of your clubs");
   if (club.status === "SUSPENDED") return fail("facilityId", `${club.name} is suspended; sessions can't be scheduled there`);
+  const clubPlan = await getClubEntitlements(club.clubId);
+  if (!clubPlan.active) return fail("facilityId", `${club.name}'s nexport subscription isn't active; sessions can't be scheduled there`);
+  if (s.kind === "OPEN_MATCH" && !clubPlan.features.includes("open_matches")) {
+    return fail("kind", `Open matches need ${club.name} to be on Club Enterprise`);
+  }
   if (s.startTime < court.openMinute || s.endTime > court.closeMinute) {
     return fail("startTime", `${court.name} is open ${minuteToTime(court.openMinute)}–${minuteToTime(court.closeMinute)} (${club.timezone})`);
   }
@@ -113,10 +122,12 @@ export async function createSession(_prev: ActionState, formData: FormData): Pro
         });
       }
       if (studentId) {
+        if (s.kind === "PRIVATE") enforce(await canAddStudent(coach.id, studentId, tx));
         await tx.insert(sessionParticipant).values({ sessionId: created!.id, userId: studentId, status: "ACCEPTED", invitedById: coach.id, respondedAt: new Date() });
       }
     });
   } catch (e) {
+    if (e instanceof EntitlementError) return fail("studentEmail", e.message);
     const message = coachConflictMessage(e);
     if (message) return { error: message, values };
     throw e;
@@ -172,16 +183,21 @@ export async function addParticipant(_prev: ActionState, formData: FormData): Pr
   const parsed = addParticipantSchema.safeParse(values);
   if (!parsed.success) return invalid(parsed.error, values);
   const [session] = await db
-    .select({ id: practiceSession.id })
+    .select({ id: practiceSession.id, kind: practiceSession.kind, clubId: practiceSession.clubId })
     .from(practiceSession)
     .where(and(ownSession(coach.id, parsed.data.sessionId), eq(practiceSession.status, "SCHEDULED")));
   if (!session) return { error: "Students can only join your scheduled sessions." };
+  if (session.clubId && !(await getClubEntitlements(session.clubId)).active) return { error: "This club's nexport subscription isn't active, so its sessions are paused.", values };
   const [student] = await db.select({ id: user.id }).from(user).where(and(eq(user.email, parsed.data.email), isNull(user.deletedAt)));
   if (!student) return { error: "No nexport account uses that email.", fieldErrors: { email: "Unknown email" }, values };
   if (student.id === coach.id) return { error: "You can't be your own student.", values };
   try {
-    await db.insert(sessionParticipant).values({ sessionId: session.id, userId: student.id, status: "ACCEPTED", invitedById: coach.id, respondedAt: new Date() });
+    await db.transaction(async (tx) => {
+      if (session.kind === "PRIVATE") enforce(await canAddStudent(coach.id, student.id, tx));
+      await tx.insert(sessionParticipant).values({ sessionId: session.id, userId: student.id, status: "ACCEPTED", invitedById: coach.id, respondedAt: new Date() });
+    });
   } catch (e) {
+    if (e instanceof EntitlementError) return { error: e.message, values };
     if (isUniqueViolation(e, "SessionParticipant_sessionId_userId_key")) return { error: "They're already in this session.", values };
     const message = coachConflictMessage(e);
     if (message) return { error: message, values };

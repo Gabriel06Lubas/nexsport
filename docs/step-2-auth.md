@@ -20,12 +20,12 @@ enforced in a **Data Access Layer** next to the data.
 | `src/modules/auth/emails/verification-code.ts` | The code email (text + HTML) |
 | `src/modules/notifications/email.ts` | SMTP sending (nodemailer); prints to the terminal in dev without SMTP |
 | `src/lib/validation.ts` | Shared free-text rules (`plainText`, `idSchema`) |
-| `src/modules/auth/actions.ts` | Server actions: sign in/out, revoke sessions, unlink provider, onboarding |
+| `src/modules/auth/actions.ts` | Server actions: sign in/out, revoke sessions, unlink provider |
 | `src/modules/auth/lib/*` | Pure, unit-tested rules: session policy, redirects, roles, device labels |
 | `src/proxy.ts` | Optimistic redirect to `/login` when there's no session cookie (Next 16's replacement for `middleware.ts`) |
 | `src/app/(auth)/login` | Sign-in page (Google, Apple, email) and `login/verify` (enter the code) |
 | `src/app/(app)/verify-email` | "Confirm your email" step after a Google/Apple sign-up |
-| `src/app/(app)/onboarding` | One-time role + profile handle step |
+| `src/app/(app)/onboarding` | Role + profile handle, then the plan (see [onboarding.md](onboarding.md)) |
 | `src/app/(app)/dashboard/*` | Role areas (`club`, `coach`, `athlete`) and `settings/security` |
 | `src/db/schema/auth.ts` | `User`, `Account`, `Session`, `EmailCode`, `Profile` tables |
 | `e2e/auth.e2e.mjs` | Browser end-to-end test against a mock OpenID provider |
@@ -39,7 +39,7 @@ enforced in a **Data Access Layer** next to the data.
         │                                                                     │
         └─► Continue with email ──► code emailed ──► /login/verify ───────────┤
                                                                               ▼
-              not onboarded? ──► /onboarding (pick role, @handle) ──► role dashboard
+              not onboarded? ──► /onboarding (role, @handle) ──► /onboarding/plan ──► role dashboard
               returning ──► callbackUrl (validated) or /dashboard ──► role dashboard
 ```
 
@@ -50,10 +50,13 @@ enforced in a **Data Access Layer** next to the data.
 | `STUDENT` | `/dashboard/athlete` | athlete |
 | `ADMIN` | `/admin` (see [admin.md](admin.md)) | all |
 
-During onboarding users can choose athlete, coach or club owner. `STAFF` is
-granted by a club, and `ADMIN` is only ever set directly in the database. Onboarding runs once:
-the update is conditional on `onboardedAt IS NULL`, so re-posting the form
-can't be used to switch roles.
+During onboarding users can choose athlete, coach or club owner. Athlete and
+coach are granted at once (Free Coach costs nothing). `CLUB_OWNER` is never
+granted by a form: it is set by the Stripe webhook once a club plan is paid
+(see [onboarding.md](onboarding.md)). `STAFF` is granted by a club, and
+`ADMIN` is only ever set directly in the database. Onboarding runs once: the
+update is conditional on `onboardedAt IS NULL`, so re-posting the form can't
+be used to switch roles.
 
 ## Session design
 

@@ -22,7 +22,8 @@ Stripe moves the club's part itself, and a refund can reverse it.
 2. Locally, run `stripe listen --forward-to localhost:3000/api/webhooks/stripe`
    and copy the `whsec_…` it prints into `STRIPE_WEBHOOK_SECRET`.
 3. In production, add the endpoint `<AUTH_URL>/api/webhooks/stripe` in the
-   Stripe dashboard with the six events listed in `.env.example`.
+   Stripe dashboard with the events listed in `.env.example` (payments, plus
+   `customer.subscription.*` for plans: see [onboarding.md](onboarding.md)).
 4. A club takes online bookings once its `StripeAccount` has
    `chargesEnabled` and `payoutsEnabled`. Creating Connect accounts and
    onboarding links isn't built yet; see "Not built yet".
@@ -86,9 +87,10 @@ Why not `PracticeSession` with a `PENDING` state, as first asked:
 | Event | Effect (`src/modules/payments/settle.ts`) |
 | --- | --- |
 | `payment_intent.succeeded` | Payment `SUCCEEDED` (charge id, paid at). Court: booking `PENDING → CONFIRMED`; the club's part (amount − fee) is recorded as a `PAID` transfer. Seat: club and coach transfers are queued `PENDING`. |
-| `checkout.session.completed` / `async_payment_succeeded` | Same, for Checkout seats |
+| `checkout.session.completed` / `async_payment_succeeded` | Same, for Checkout seats. In `subscription` mode: provisions a paid plan ([onboarding.md](onboarding.md)) |
+| `customer.subscription.created` / `updated` / `deleted` / `paused` / `resumed` | The plan's `Subscription` row follows Stripe (status, period, cancellation, plan change) |
 | `payment_intent.payment_failed` | Decline code and message are recorded, and the hold is **kept**. A failed PaymentIntent returns to `requires_payment_method` and can be retried with another card. If the hold then expires, the payment ends **`FAILED`** and the slot is released. |
-| `payment_intent.canceled` / `checkout.session.expired` | Payment `CANCELED`, slot or seat released |
+| `payment_intent.canceled` / `checkout.session.expired` | Payment `CANCELED`, slot or seat released (a plan checkout is marked `EXPIRED`, freeing its club address) |
 | Paid **after** its hold was released | The payment is recorded and refunded in full. For a court, the refund uses `reverse_transfer` and `refund_application_fee`. |
 
 Releasing a hold on a declined card immediately would stop the customer

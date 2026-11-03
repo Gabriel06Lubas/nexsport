@@ -1,12 +1,13 @@
 "use server";
 
-import { and, count, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { db } from "@/db";
 import { isUniqueViolation } from "@/db/errors";
 import { equipment, equipmentMaintenance, facility, facilityPriceRule } from "@/db/schema";
 import { formValues, invalid, type ActionState } from "@/lib/action-state";
+import { canCreateFacility } from "@/lib/entitlements";
 import { idSchema } from "@/lib/validation";
 
 import {
@@ -17,7 +18,7 @@ import {
   priceRuleSchema,
   resolveMaintenanceSchema,
 } from "../lib/forms";
-import { conflictMessage, guardClubWrite, LimitReached, lockClubAndGetLimits, revalidateClub } from "./shared";
+import { conflictMessage, guardClubWrite, enforceLimit, LimitReached, revalidateClub } from "./shared";
 
 // Facilities, dynamic pricing and equipment. Every write is scoped to the
 // club from the guard: an id from another club simply matches no row.
@@ -49,14 +50,7 @@ export async function saveFacility(_prev: ActionState, formData: FormData): Prom
       if (updated.length === 0) return { error: "That facility no longer exists." };
     } else {
       await db.transaction(async (tx) => {
-        const limits = await lockClubAndGetLimits(tx, access.club.id);
-        const [{ n = 0 } = {}] = await tx
-          .select({ n: count() })
-          .from(facility)
-          .where(and(eq(facility.clubId, access.club.id), eq(facility.isActive, true)));
-        if (limits.maxFacilities !== null && n >= limits.maxFacilities) {
-          throw new LimitReached(`Your ${limits.name} plan includes ${limits.maxFacilities} active facilities. Deactivate one or upgrade.`);
-        }
+        enforceLimit(await canCreateFacility(access.club.id, tx));
         await tx.insert(facility).values({ ...row, clubId: access.club.id });
       });
     }
@@ -81,14 +75,7 @@ export async function setFacilityActive(_prev: ActionState, formData: FormData):
   try {
     await db.transaction(async (tx) => {
       if (active) {
-        const limits = await lockClubAndGetLimits(tx, access.club.id);
-        const [{ n = 0 } = {}] = await tx
-          .select({ n: count() })
-          .from(facility)
-          .where(and(eq(facility.clubId, access.club.id), eq(facility.isActive, true)));
-        if (limits.maxFacilities !== null && n >= limits.maxFacilities) {
-          throw new LimitReached(`Your ${limits.name} plan includes ${limits.maxFacilities} active facilities.`);
-        }
+        enforceLimit(await canCreateFacility(access.club.id, tx));
       }
       await tx.update(facility).set({ isActive: active }).where(and(eq(facility.id, facilityId), eq(facility.clubId, access.club.id)));
     });

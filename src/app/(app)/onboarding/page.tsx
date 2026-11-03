@@ -1,23 +1,42 @@
+import { and, eq } from "drizzle-orm";
 import type { Metadata } from "next";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import { OnboardingForm } from "@/modules/auth/components/onboarding-form";
+import { db } from "@/db";
+import { planCheckout, profile } from "@/db/schema";
 import { requireUser } from "@/modules/auth/dal";
 import { homePathFor } from "@/modules/auth/lib/roles";
+import { RoleStep } from "@/modules/onboarding/components/role-step";
 
 export const metadata: Metadata = { title: "Welcome" };
 
+// Step 1 of 3: who you are. Club owners go on to choose and pay for a plan;
+// their account stays a plain, un-onboarded one until the payment is confirmed.
 export default async function OnboardingPage() {
   const user = await requireUser();
   if (user.onboarded || user.role === "ADMIN") redirect(homePathFor(user.role));
+  const [[own], [openClub]] = await Promise.all([
+    db.select({ handle: profile.handle, displayName: profile.displayName }).from(profile).where(eq(profile.userId, user.id)),
+    db.select({ clubName: planCheckout.clubName }).from(planCheckout).where(and(eq(planCheckout.userId, user.id), eq(planCheckout.kind, "CLUB_SIGNUP"), eq(planCheckout.status, "OPEN"))).limit(1),
+  ]);
 
   return (
     <div className="mx-auto max-w-2xl">
-      <p className="text-sm font-semibold uppercase tracking-wider text-accent-text">Welcome</p>
+      <p className="text-sm font-semibold uppercase tracking-wider text-accent-text">Step 1 of 3 · Welcome</p>
       <h1 className="mt-2 text-3xl font-semibold tracking-tight">Let’s set up your account</h1>
-      <p className="mt-2 text-muted-foreground">This takes ten seconds. Your handle is how teammates and clubs find you.</p>
+      <p className="mt-2 text-muted-foreground">Your handle is how teammates and clubs find you.</p>
+      {own && (
+        <p className="mt-6 rounded-2xl border border-border bg-card px-4 py-3 text-sm">
+          {openClub?.clubName ? `You started setting up ${openClub.clubName}. ` : "You started setting up a club. "}
+          <Link href="/onboarding/plan?for=club" className="font-medium text-accent-text hover:underline">
+            Continue to the plan
+          </Link>
+          , or choose another option below.
+        </p>
+      )}
       <div className="mt-8 rounded-3xl border border-border bg-card p-6 sm:p-8">
-        <OnboardingForm defaultName={user.name ?? ""} />
+        <RoleStep defaultName={own?.displayName ?? user.name ?? ""} defaultHandle={own?.handle} defaultRole={own ? "CLUB_OWNER" : undefined} />
       </div>
     </div>
   );

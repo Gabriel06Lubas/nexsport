@@ -1,15 +1,17 @@
 import { notFound } from "next/navigation";
 import type { NextRequest } from "next/server";
 
-import { requireClubAccess } from "@/modules/clubs/dal";
+import { getClubPlan, requireClubAccess } from "@/modules/clubs/dal";
 import { monthSchema } from "@/modules/clubs/lib/forms";
 import { currentMonth, getPayoutReport, toCsv } from "@/modules/clubs/queries/staff";
 
 // GET /dashboard/:clubSlug/staff/payout-report?month=YYYY-MM → CSV download.
-// Same gate as the payroll panel: club member with MANAGE_BILLING, else 404.
+// Same gate as the payroll panel: club member with MANAGE_BILLING, on an
+// active Club Enterprise subscription (the `payroll` feature), else 404.
 export async function GET(request: NextRequest, { params }: { params: Promise<{ clubSlug: string }> }) {
   const { clubSlug } = await params;
   const access = await requireClubAccess(clubSlug, "MANAGE_BILLING");
+  if (!(await getClubPlan(access.club.id)).features.includes("payroll")) notFound();
   const raw = request.nextUrl.searchParams.get("month") ?? currentMonth(access.club.timezone);
   const parsed = monthSchema.safeParse(raw);
   if (!parsed.success) notFound();

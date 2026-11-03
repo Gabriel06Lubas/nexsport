@@ -32,7 +32,9 @@ export function homePathFor(role: UserRole) {
   return role === "ADMIN" ? ("/admin" as const) : areaPaths[homeArea[role]];
 }
 
-/** Roles a user may pick for themselves during onboarding. STAFF is granted
- *  by a club; ADMIN is only ever set directly in the database. */
-export const selfAssignableRoles = ["STUDENT", "COACH", "CLUB_OWNER"] as const satisfies readonly UserRole[];
+/** Roles a user may give themselves during onboarding. CLUB_OWNER is not one:
+ *  it is granted by the Stripe webhook once a club plan is paid for
+ *  (src/modules/payments/subscriptions.ts). STAFF is granted by a club;
+ *  ADMIN is only ever set directly in the database. */
+export const selfAssignableRoles = ["STUDENT", "COACH"] as const satisfies readonly UserRole[];
 export type SelfAssignableRole = (typeof selfAssignableRoles)[number];

@@ -10,6 +10,7 @@ import { db } from "@/db";
 import { isBookingConflict, isUniqueViolation } from "@/db/errors";
 import { club, paymentTransaction, practiceSession, sessionParticipant } from "@/db/schema";
 import { formValues, type ActionState } from "@/lib/action-state";
+import { hasClubFeature } from "@/lib/entitlements";
 import { formatMoney } from "@/lib/utils";
 import { platformFeeBpsFor } from "@/modules/payments/platform-fee";
 import { releaseExpiredHolds } from "@/modules/payments/settle";
@@ -58,6 +59,8 @@ export async function joinOpenMatch(_prev: ActionState, formData: FormData): Pro
       ),
     );
   if (!match) return { error: "This match isn't open any more." };
+  // Open matches are a Club Enterprise feature; a lapsed subscription pauses them.
+  if (!(await hasClubFeature(match.clubId, "open_matches"))) return { error: "This match isn't open any more." };
   if (match.coachId === student.id) return { error: "You're running this match." };
   const level = (await getMyLevels(student.id)).get(match.sportId) ?? null;
   if (!levelFits(level, match.minLevel, match.maxLevel)) {

@@ -8,6 +8,8 @@ import {
   disputeStatus,
   paymentKind,
   paymentStatus,
+  planCheckoutKind,
+  planCheckoutStatus,
   planAudience,
   refundStatus,
   stripeAccountStatus,
@@ -355,4 +357,54 @@ export const stripeWebhookEvent = pgTable(
     createdAt: createdAt(),
   },
   (t) => [idx("StripeWebhookEvent", t.type, t.createdAt)],
+);
+
+/**
+ * A Stripe Checkout for a paid plan, started by a user. Everything the
+ * purchase will create (the club's details, the tier) is stored here, server
+ * side, before the customer goes to Stripe; the webhook provisions from this
+ * row, never from data the browser or Stripe metadata could carry. Nothing is
+ * created and no role is granted until the signed checkout.session.completed
+ * event arrives with a paid, active subscription.
+ */
+export const planCheckout = pgTable(
+  "PlanCheckout",
+  {
+    id: id(),
+    userId: text().notNull(),
+    kind: planCheckoutKind().notNull(),
+    tier: subscriptionTier().notNull(),
+    status: planCheckoutStatus().notNull().default("OPEN"),
+    /** CLUB_SUBSCRIPTION: the club; CLUB_SIGNUP: the club created on completion. */
+    clubId: text(),
+    // CLUB_SIGNUP: the club to create.
+    clubName: text(),
+    clubSlug: text(),
+    city: text(),
+    country: char({ length: 2 }),
+    timezone: text(),
+    currency: char({ length: 3 }),
+    stripeCheckoutSessionId: text(),
+    stripeSubscriptionId: text(),
+    error: text(),
+    createdAt: createdAt(),
+    completedAt: tstz(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniq("PlanCheckout", t.stripeCheckoutSessionId),
+    idx("PlanCheckout", t.userId, t.status),
+    // A club address can only be reserved by one open signup at a time.
+    uniqueIndex("PlanCheckout_open_slug_key").on(t.clubSlug).where(sql`"status" = 'OPEN' AND "clubSlug" IS NOT NULL`),
+    fk("PlanCheckout", [t.userId], [user.id]).onDelete("cascade"),
+    fk("PlanCheckout", [t.clubId], [club.id]).onDelete("set null"),
+    check(
+      "PlanCheckout_kind_shape",
+      sql`CASE "kind"
+        WHEN 'CLUB_SIGNUP' THEN num_nonnulls("clubName", "clubSlug", "country", "timezone", "currency") = 5 AND "tier" IN ('CLUB_BASIC', 'CLUB_ENTERPRISE')
+        WHEN 'CLUB_SUBSCRIPTION' THEN "clubId" IS NOT NULL AND "tier" IN ('CLUB_BASIC', 'CLUB_ENTERPRISE')
+        WHEN 'COACH_PRO' THEN "tier" = 'PRO_COACH' AND "clubId" IS NULL
+      END`,
+    ),
+  ],
 );

@@ -1,7 +1,7 @@
 // End-to-end test of the club owner / facility manager dashboard: tenant
 // isolation and staff permissions, analytics, facilities and dynamic
 // pricing, equipment maintenance, court bookings, memberships, staff and
-// payroll, billing, suspension and club creation, in a real browser against
+// payroll, billing, suspension, plan enforcement and club sign-up, in a real browser against
 // the real app and Postgres with demo data (scripts/seed-demo.mjs).
 //
 //   DATABASE_URL=postgresql://... npm run test:e2e:club
@@ -365,21 +365,47 @@ try {
   check((await owner.getByRole("alert").filter({ hasText: "suspended by nexport" }).isVisible()) && (await form(owner, "New court booking").count()) === 0, "suspended clubs show a banner and no forms");
   await db.query(`UPDATE "Club" SET status = 'ACTIVE' WHERE id = 'democlub01'`);
 
-  // 9. A new owner creates a club ----------------------------------------------------
+  // 9. Plans: what the club pays for is enforced on the server -------------------
+  // Club Basic: payroll and heatmaps are Enterprise features.
+  await db.query(`UPDATE "Subscription" SET tier = 'CLUB_BASIC' WHERE "clubId" = 'democlub01'`);
+  await owner.goto(`${APP}${CLUB}/staff`);
+  check(await said(owner, "Monthly payout reports are part of Club Enterprise"), "Club Basic: payroll is an upgrade prompt");
+  check((await owner.request.get(`${APP}${CLUB}/staff/payout-report`)).status() === 404, "…and the payout CSV is a 404, even for the owner");
+  await owner.goto(`${APP}${CLUB}`);
+  check(await said(owner, "Occupancy heatmaps are part of Club Enterprise"), "Club Basic: the peak-hours heatmap is an upgrade prompt");
+  await db.query(`UPDATE "Subscription" SET tier = 'CLUB_ENTERPRISE' WHERE "clubId" = 'democlub01'`);
+
+  // PAST_DUE: the dashboard locks and every write is refused until it's paid.
+  await owner.goto(`${APP}${CLUB}/schedule?date=${monday}`);
+  await db.query(`UPDATE "Subscription" SET status = 'PAST_DUE' WHERE "clubId" = 'democlub01'`);
+  await fillBooking("E2E Turf Pitch", "12:00", "13:00", "E2E Past due");
+  check(await said(book, "subscription is past due"), "a form opened before the payment failed is refused by the server");
+  check(!(await one(`SELECT 1 AS x FROM "FacilityBooking" WHERE "customerName" = 'E2E Past due'`)), "…and nothing was booked");
+  await owner.goto(`${APP}${CLUB}/facilities`);
+  check(new URL(owner.url()).pathname === CLUB && (await said(owner, "dashboard is locked")), "sections redirect to a locked overview");
+  check(await owner.getByRole("link", { name: "Go to billing" }).isVisible(), "…that points the owner to billing");
+  await owner.goto(`${APP}${CLUB}/billing`);
+  check((await said(owner, "Past due")) && (await owner.getByRole("button", { name: "Manage billing" }).isVisible()), "billing stays open, with the status and the Stripe portal button");
+  await db.query(`UPDATE "Subscription" SET status = 'CANCELED' WHERE "clubId" = 'democlub01'`);
+  await owner.reload();
+  check(await owner.getByRole("button", { name: /^Choose Club Enterprise/ }).isVisible(), "a cancelled club is offered a new plan instead");
+  await db.query(`UPDATE "Subscription" SET status = 'ACTIVE' WHERE "clubId" = 'democlub01'`);
+  await owner.goto(`${APP}${CLUB}/facilities`);
+  check(new URL(owner.url()).pathname === `${CLUB}/facilities`, "access is back as soon as the subscription is active");
+
+  // A new club is bought, never created for free.
   const newOwner = await emailSignIn(await newContext(), NEW_OWNER);
-  check(new URL(newOwner.url()).pathname === "/dashboard/club" && (await newOwner.getByRole("heading", { name: "Create your club" }).isVisible()), "an owner without a club is asked to create one");
-  const create = form(newOwner, "Create a club");
-  await create.getByLabel("Club name").fill("E2E Club");
-  await create.getByLabel("Dashboard address").fill("settings");
-  await create.getByRole("button", { name: "Create club" }).click();
-  check(await said(create, "That address is reserved"), "reserved slugs (static routes) are refused");
-  await create.getByLabel("Dashboard address").fill("demo-padel-central");
-  await create.getByRole("button", { name: "Create club" }).click();
-  check(await said(create, "That address is taken"), "taken slugs are refused");
-  await create.getByLabel("Dashboard address").fill("e2e-club");
-  await create.getByRole("button", { name: "Create club" }).click();
-  await newOwner.waitForURL((u) => u.pathname === "/dashboard/e2e-club");
-  check(await newOwner.getByText("Setting up").first().isVisible(), "the new club opens in set-up mode, owned by its creator");
+  const buy = form(newOwner, "Club plan and details");
+  check(
+    new URL(newOwner.url()).pathname === "/dashboard/club" && (await newOwner.getByRole("heading", { name: "Create your club" }).isVisible()) && (await buy.isVisible()),
+    "an owner without a club is asked to choose a plan",
+  );
+  check((await newOwner.getByRole("button", { name: "Create club" }).count()) === 0, "…there's no free \"Create club\" any more");
+  await buy.getByLabel("Club name").fill("E2E Club");
+  await buy.getByLabel("Dashboard address").fill("e2e-club");
+  await buy.getByRole("button", { name: "Continue to payment" }).click();
+  check(await said(buy, "needs online payment"), "without Stripe configured, sign-up stops before payment");
+  check(!(await one(`SELECT 1 AS x FROM "Club" WHERE slug = 'e2e-club'`)), "…and no club exists");
 
   // 10. Phone width ------------------------------------------------------------------
   await db.query(`UPDATE "EmailCode" SET "createdAt" = now() - interval '2 minutes' WHERE email = 'owner01@demo.nexport.test'`);
@@ -403,6 +429,7 @@ try {
 } finally {
   if (process.env.E2E_APP_LOG) (await import("node:fs")).writeFileSync(process.env.E2E_APP_LOG, appLog);
   await db.query(`UPDATE "Club" SET status = 'ACTIVE' WHERE id = 'democlub01'`);
+  await db.query(`UPDATE "Subscription" SET status = 'ACTIVE', tier = 'CLUB_ENTERPRISE' WHERE "clubId" = 'democlub01'`);
   await cleanup();
   await db.end();
   await browser.close();

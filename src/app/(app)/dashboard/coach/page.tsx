@@ -27,7 +27,8 @@ export default async function CoachSchedulePage({ searchParams }: { searchParams
   const profile = await getCoachProfile(coach);
   const tz = profile.timezone;
   const today = zonedParts(new Date(), tz).dateKey;
-  const raw = (await searchParams).week;
+  const sp = await searchParams;
+  const raw = sp.week;
   const anchor = typeof raw === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw) && zonedToUtc(raw, 0, tz) ? raw : today;
   const monday = addDays(anchor, 1 - isoDowOf(anchor));
   const weekFrom = zonedToUtc(monday, 0, tz)!;
@@ -72,6 +73,12 @@ export default async function CoachSchedulePage({ searchParams }: { searchParams
       <PageHeader title="Schedule & sessions" description={`Your private sessions, group classes and open matches. Times in ${tz}.`}>
         <NewSessionDialog facilities={options.facilities} sports={options.sports} equipment={options.equipment} defaultDate={today} defaultSportId={profile.sportId} />
       </PageHeader>
+
+      {sp.upgraded === "1" && (
+        <p role="status" className="rounded-2xl border border-success/30 bg-success-soft px-4 py-3 text-sm font-medium">
+          You&apos;re on Pro Coach: unlimited students and your public booking link are switched on.
+        </p>
+      )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <KpiCard

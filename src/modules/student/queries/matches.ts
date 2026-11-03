@@ -5,7 +5,8 @@ import { sql } from "drizzle-orm";
 import { rows } from "@/modules/clubs/queries/shared";
 
 // The open-match board: upcoming OPEN_MATCH sessions with free seats (or the
-// student's own), at clubs that are open for business.
+// student's own), at clubs that are open for business and on an active Club
+// Enterprise subscription (open matches are an Enterprise feature).
 
 export type OpenMatch = {
   id: string;
@@ -46,6 +47,7 @@ export async function listOpenMatches(userId: string, filter: { sportId: string 
        AND s."startsAt" < now() + make_interval(days => ${filter.days})
        AND (${filter.sportId}::text IS NULL OR s."sportId" = ${filter.sportId})
        AND (${filter.clubId}::text IS NULL OR s."clubId" = ${filter.clubId})
+       AND EXISTS (SELECT 1 FROM "Subscription" sub WHERE sub."clubId" = s."clubId" AND sub.tier = 'CLUB_ENTERPRISE' AND sub.status IN ('ACTIVE', 'TRIALING'))
      GROUP BY s.id, sp.id, c.id, f.id, co.id
      ORDER BY s."startsAt"
      LIMIT 100`);

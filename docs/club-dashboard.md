@@ -6,7 +6,7 @@ from that club's roster, not from the platform role alone.
 
 | Route | Section | Who can open it |
 | --- | --- | --- |
-| `/dashboard/club` | Club picker; create a club | Club owners and staff (one club → straight to it) |
+| `/dashboard/club` | Club picker; add a club (choose its plan and pay in Stripe Checkout) | Club owners and staff (one club → straight to it) |
 | `/dashboard/:slug` | **Overview & analytics**: utilisation, revenue breakdown, members, peak-hours heatmap | Every owner / staff member; KPIs need *Analytics* |
 | `/dashboard/:slug/facilities` | **Facilities & courts**: courts and pitches, opening hours, dynamic pricing, equipment, maintenance log | *Facilities & pricing* or *Equipment & maintenance* |
 | `/dashboard/:slug/staff` | **Staff & payroll**: roster, billable hours, Stripe Connect splits, payout report | *Members* or *Billing* (pay terms and payroll need *Billing*) |
@@ -114,13 +114,15 @@ ledger coaches write to (see [coach-dashboard.md](coach-dashboard.md#credits)).
 DATABASE_URL=postgresql://… npm run test:e2e:club
 ```
 
-Seeds the demo data and checks 68 things in a real browser: tenant isolation
+Seeds the demo data and checks 78 things in a real browser: tenant isolation
 and staff permissions (including the CSV route), KPI values against the
 database, facility limits, hostile input, price windows and overlap
 rejection, maintenance counts, dynamic prices, double-booking and
 rental-vs-clinic conflicts, memberships and credits, granting permissions,
-the payout CSV, billing filters, suspension enforced on the server, creating
-a club, no horizontal scroll at 375px, and no console errors. Unit tests
+the payout CSV, billing filters, suspension enforced on the server, plan
+enforcement (Club Basic upsells, a PAST_DUE club locked and refused on the
+server, a cancelled one offered a new plan), paid-only club creation, no
+horizontal scroll at 375px, and no console errors. Unit tests
 cover time zones (including daylight-saving gaps), pricing, permissions and
 the form parsers (`src/modules/clubs/lib/clubs-lib.test.ts`).
 

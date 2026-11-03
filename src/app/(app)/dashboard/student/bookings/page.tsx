@@ -9,7 +9,7 @@ import { facilityBooking, paymentTransaction } from "@/db/schema";
 import { parseListParams, pickParam } from "@/lib/list-params";
 import { cn, formatMoney } from "@/lib/utils";
 import { BookingCard, bookingDay } from "@/modules/student/components/booking-card";
-import { RefreshWhile } from "@/modules/student/components/refresh-while";
+import { RefreshWhile } from "@/components/refresh-while";
 import { requireStudent } from "@/modules/student/dal";
 import { isPassValid, listMyBookings, listMyCreditHistory, listMyPasses, type BookingScope } from "@/modules/student/queries/bookings";
 import { loadPolicies } from "@/modules/student/queries/policy";

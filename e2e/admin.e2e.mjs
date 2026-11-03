@@ -149,7 +149,7 @@ try {
   check(new URL(admin.url()).pathname === "/admin", "admin signs in (email code) and lands on /admin");
   await shot(admin, "admin-1-overview");
   const kpi = async (label) => (await admin.getByRole("region", { name: label, exact: true }).textContent()) ?? "";
-  check((await kpi("Platform MRR")).includes("€354.00"), "MRR = €354.00 (active + past due; trials and cancelled excluded)");
+  check((await kpi("Platform MRR")).includes("€654.00"), "MRR = €654.00 (active + past due; trials and cancelled excluded)");
   check((await kpi("Active tenants")).includes("10") && (await kpi("Active tenants")).includes("5 clubs · 5 coaches (2 pro)"), "active tenants = 10 (5 active clubs + 5 coaches, 2 pro)");
   check((await kpi("Stripe Connect health")).includes("71.4%"), "Connect health = 71.4% (5 of 7 accounts)");
   // The seed's club-dashboard data adds rentals, clinics and memberships, so the

@@ -1,18 +1,16 @@
 "use server";
 
-import { and, eq, isNull, ne } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 
 import { db } from "@/db";
-import { isUniqueViolation } from "@/db/errors";
-import { idSchema, plainText } from "@/lib/validation";
-import { account, profile, session, user as userTable } from "@/db/schema";
+import { idSchema } from "@/lib/validation";
+import { account, session } from "@/db/schema";
 
 import { signIn, signOut } from "./auth";
 import { assertNotImpersonating, getCurrentSessionTokenHash, requireUser } from "./dal";
 import { safeCallbackUrl } from "./lib/redirects";
-import { homePathFor, selfAssignableRoles } from "./lib/roles";
 import { configuredProviderIds, type ProviderId } from "./providers";
 
 // Every action re-authenticates through the DAL. Server Actions are public
@@ -69,62 +67,4 @@ export async function unlinkProvider(formData: FormData) {
   redirect("/dashboard/settings/security?unlinked=1");
 }
 
-// ---------------------------------------------------------------------------
-// Onboarding
-// ---------------------------------------------------------------------------
-
-const onboardingSchema = z.object({
-  role: z.enum(selfAssignableRoles),
-  displayName: plainText({ min: 2, max: 60, label: "display name" }),
-  handle: z
-    .string()
-    .trim()
-    .toLowerCase()
-    .regex(/^[a-z0-9_.]{3,30}$/, "3–30 characters: letters, numbers, dots and underscores"),
-});
-
-export type OnboardingState = {
-  errors?: Partial<Record<keyof z.infer<typeof onboardingSchema> | "form", string>>;
-  values?: Partial<Record<keyof z.infer<typeof onboardingSchema>, string>>;
-};
-
-export async function completeOnboarding(_prev: OnboardingState, formData: FormData): Promise<OnboardingState> {
-  const user = await requireUser();
-  await assertNotImpersonating();
-  const raw = {
-    role: String(formData.get("role") ?? ""),
-    displayName: String(formData.get("displayName") ?? ""),
-    handle: String(formData.get("handle") ?? ""),
-  };
-  const parsed = onboardingSchema.safeParse(raw);
-  if (!parsed.success) {
-    const errors: OnboardingState["errors"] = {};
-    for (const issue of parsed.error.issues) {
-      const key = issue.path[0] as keyof typeof raw;
-      errors[key] ??= issue.message;
-    }
-    return { errors, values: raw };
-  }
-
-  const { role, displayName, handle } = parsed.data;
-  try {
-    await db.transaction(async (tx) => {
-      // `onboardedAt IS NULL` makes this a one-shot: re-submitting the form
-      // later can't be used to switch roles (e.g. student → club owner).
-      const updated = await tx
-        .update(userTable)
-        .set({ role, onboardedAt: new Date() })
-        // Never for admins: onboarding must not be able to change their role.
-        .where(and(eq(userTable.id, user.id), isNull(userTable.onboardedAt), ne(userTable.role, "ADMIN")))
-        .returning({ id: userTable.id });
-      if (updated.length === 0) return;
-      await tx.insert(profile).values({ userId: user.id, handle, displayName });
-    });
-  } catch (e) {
-    if (isUniqueViolation(e, "Profile_handle_key")) {
-      return { errors: { handle: "That handle is taken" }, values: raw };
-    }
-    throw e;
-  }
-  redirect(homePathFor(role));
-}
+// Onboarding (role and plan selection) lives in src/modules/onboarding/actions.ts.

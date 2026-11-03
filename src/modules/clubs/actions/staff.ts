@@ -1,14 +1,15 @@
 "use server";
 
-import { and, count, eq, inArray, isNull, ne } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne } from "drizzle-orm";
 
 import { db } from "@/db";
 import { clubMember, user } from "@/db/schema";
 import { formValues, invalid, type ActionState } from "@/lib/action-state";
+import { canAddStaff } from "@/lib/entitlements";
 
 import { addMemberSchema, addStaffSchema, idOnly, permissionsSchema, updatePaySchema } from "../lib/forms";
 import { hasPermission } from "../lib/permissions";
-import { guardClubWrite, LimitReached, lockClubAndGetLimits, revalidateClub } from "./shared";
+import { guardClubWrite, enforceLimit, LimitReached, revalidateClub } from "./shared";
 
 // The staff & coach roster. Who may change what:
 //   * adding or removing STAFF, and their permissions: the owner only, so a
@@ -39,20 +40,14 @@ export async function addStaffMember(_prev: ActionState, formData: FormData): Pr
 
   try {
     await db.transaction(async (tx) => {
-      const limits = await lockClubAndGetLimits(tx, access.club.id);
+      const allowed = await canAddStaff(access.club.id, tx);
       const [existing] = await tx
         .select({ id: clubMember.id, status: clubMember.status })
         .from(clubMember)
         .where(and(eq(clubMember.clubId, access.club.id), eq(clubMember.userId, person.id), eq(clubMember.role, input.role)));
       if (existing && existing.status !== "LEFT") throw new LimitReached(`They're already on your roster as ${input.role === "STAFF" ? "staff" : "a coach"}.`);
 
-      const [{ n = 0 } = {}] = await tx
-        .select({ n: count() })
-        .from(clubMember)
-        .where(and(eq(clubMember.clubId, access.club.id), inArray(clubMember.role, ["STAFF", "COACH"]), inArray(clubMember.status, ["INVITED", "ACTIVE"])));
-      if (limits.maxStaff !== null && n >= limits.maxStaff) {
-        throw new LimitReached(`Your ${limits.name} plan includes ${limits.maxStaff} staff and coaches. Remove someone or upgrade.`);
-      }
+      enforceLimit(allowed);
 
       const pay = {
         title: input.title,

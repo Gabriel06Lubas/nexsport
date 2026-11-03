@@ -13,6 +13,7 @@
     "test:e2e:club": "node e2e/club.e2e.mjs",
     "test:e2e:coach": "node e2e/coach.e2e.mjs",
     "test:e2e:student": "node e2e/student.e2e.mjs",
+    "test:e2e:onboarding": "node e2e/onboarding.e2e.mjs",
     "db:up": "node scripts/local-postgres.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node scripts/db-migrate.mjs",

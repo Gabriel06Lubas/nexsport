@@ -90,6 +90,8 @@ export async function createCourtBookingAction(_prev: CourtBookingState, formDat
         sql`${club.deletedAt} IS NULL`,
         eq(stripeAccount.chargesEnabled, true),
         eq(stripeAccount.payoutsEnabled, true),
+        // The club's nexport subscription must be live (not PAST_DUE / CANCELED).
+        sql`EXISTS (SELECT 1 FROM "Subscription" sub WHERE sub."clubId" = ${club.id} AND sub.status IN ('ACTIVE', 'TRIALING'))`,
       ),
     );
   if (!target) return fail("facilityId", "That court can't be booked online");

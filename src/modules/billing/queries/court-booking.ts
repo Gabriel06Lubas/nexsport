@@ -7,7 +7,8 @@ import { rows } from "@/modules/clubs/queries/shared";
 /**
  * Facilities customers can book and pay online: active facilities at active
  * clubs whose Stripe Connect account can take charges and receive payouts
- * (a destination charge to an account that can't would fail).
+ * (a destination charge to an account that can't would fail), and whose
+ * nexport subscription is ACTIVE or TRIALING.
  */
 export async function listBookableFacilities() {
   return rows<{
@@ -28,5 +29,6 @@ export async function listBookableFacilities() {
       JOIN "Club" c ON c.id = f."clubId" AND c."deletedAt" IS NULL AND c.status = 'ACTIVE'
       JOIN "StripeAccount" sa ON sa."clubId" = c.id AND sa."chargesEnabled" AND sa."payoutsEnabled"
      WHERE f."isActive"
+       AND EXISTS (SELECT 1 FROM "Subscription" sub WHERE sub."clubId" = c.id AND sub.status IN ('ACTIVE', 'TRIALING'))
      ORDER BY c.name, f.name`);
 }

@@ -1,12 +1,14 @@
 import "server-only";
 
 import { and, eq, inArray, isNull, ne } from "drizzle-orm";
-import { notFound } from "next/navigation";
+import type { Route } from "next";
+import { notFound, redirect } from "next/navigation";
 import { cache } from "react";
 
 import { db } from "@/db";
 import { club, clubMember } from "@/db/schema";
 import type { ClubPermission } from "@/db/schema/enums";
+import { getClubEntitlements } from "@/lib/entitlements";
 import { requireOnboardedUser, type CurrentUser } from "@/modules/auth/dal";
 
 import { allClubPermissions, canOpenSection, clubSlugPattern, hasPermission, type ClubSection } from "./lib/permissions";
@@ -96,10 +98,19 @@ export async function requireClubAccess(slug: string, permission?: ClubPermissio
   return access;
 }
 
-/** For pages: the section must be open to this member. */
+/** The club's plan and subscription status, once per request. */
+export const getClubPlan = cache((clubId: string) => getClubEntitlements(clubId));
+
+/**
+ * For pages: the section must be open to this member, and the club's
+ * subscription must be ACTIVE or TRIALING. Without one, every section but
+ * Billing sends the member to the overview, which explains what's wrong
+ * (the Server Actions refuse on their own, in guardClubWrite).
+ */
 export async function requireClubSection(slug: string, section: ClubSection): Promise<ClubAccess> {
   const access = await requireClubAccess(slug);
   if (!canOpenSection(access, section)) notFound();
+  if (section !== "billing" && !(await getClubPlan(access.club.id)).active) redirect(`/dashboard/${access.club.slug}` as Route);
   return access;
 }
 

@@ -118,6 +118,15 @@ export const conversationType = pgEnum("ConversationType", ["DIRECT", "GROUP"]);
 /** SaaS plans; prices, limits and Stripe Price IDs live in SubscriptionPlan. */
 export const subscriptionTier = pgEnum("SubscriptionTier", ["FREE_COACH", "PRO_COACH", "CLUB_BASIC", "CLUB_ENTERPRISE"]);
 
+/** What a paid plan checkout is for. */
+export const planCheckoutKind = pgEnum("PlanCheckoutKind", [
+  "CLUB_SIGNUP", // a new club: provisioned (and the buyer made CLUB_OWNER) only once paid
+  "CLUB_SUBSCRIPTION", // an existing club without a live subscription subscribes
+  "COACH_PRO", // a coach upgrades to Pro Coach
+]);
+
+export const planCheckoutStatus = pgEnum("PlanCheckoutStatus", ["OPEN", "COMPLETED", "EXPIRED", "FAILED"]);
+
 /** Who a plan is sold to. */
 export const planAudience = pgEnum("PlanAudience", ["COACH", "CLUB"]);
 

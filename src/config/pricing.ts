@@ -15,10 +15,27 @@ export type PlanFacts = {
   platformFeeBps: number;
   limits: { maxFacilities: number | null; maxStaff: number | null; maxAthletes: number | null };
   stripePriceEnv: string | null;
+  features: PlanFeature[];
 };
+
+/** Feature flags a plan unlocks; checked on the server by src/lib/entitlements.ts. */
+export type PlanFeature =
+  | "unlimited_students"
+  | "booking_link"
+  | "credit_passes"
+  | "reminders"
+  | "dynamic_pricing"
+  | "equipment"
+  | "utilization_reports"
+  | "advanced_analytics"
+  | "payroll"
+  | "open_matches"
+  | "multi_location"
+  | "priority_support";
 
 export const planCurrency = plansFile.currency;
 export const planFacts = plansFile.plans as PlanFacts[];
+export const planFactsFor = (tier: SubscriptionTier) => planFacts.find((p) => p.tier === tier)!;
 
 const facts = (tier: SubscriptionTier) => planFacts.find((p) => p.tier === tier)!;
 const pct = (bps: number) => `${(bps / 100).toLocaleString("en", { maximumFractionDigits: 2 })}%`;

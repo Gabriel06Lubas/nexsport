@@ -37,6 +37,12 @@ INSERT INTO results VALUES
   ('StripeAccount unique per coach', pg_temp.has_index('StripeAccount', 'StripeAccount_userId_key', true, '%("userId")%')),
   ('StripeAccount acct_ id unique', pg_temp.has_index('StripeAccount', 'StripeAccount_stripeAccountId_key', true, '%("stripeAccountId")%')),
   ('StripeAccount has exactly one owner', pg_temp.has_constraint('StripeAccount', 'StripeAccount_exactly_one_owner', 'c')),
+  -- Paid onboarding: what the Stripe webhook provisions from, and one live plan each.
+  ('PlanCheckout: kind decides which fields are required', pg_temp.has_constraint('PlanCheckout', 'PlanCheckout_kind_shape', 'c')),
+  ('PlanCheckout: one open checkout per reserved club address', pg_temp.has_index('PlanCheckout', 'PlanCheckout_open_slug_key', true, '%("clubSlug") WHERE%')),
+  ('PlanCheckout: a Stripe Checkout Session provisions once', pg_temp.has_index('PlanCheckout', 'PlanCheckout_stripeCheckoutSessionId_key', true, '%("stripeCheckoutSessionId")%')),
+  ('Subscription: one live subscription per club', pg_temp.has_index('Subscription', 'Subscription_one_live_per_club', true, '%("clubId") WHERE%')),
+  ('Subscription: one live subscription per user', pg_temp.has_index('Subscription', 'Subscription_one_live_per_user', true, '%("userId") WHERE%')),
   -- Payments: idempotency and webhook lookups.
   ('PaymentTransaction pi_ id unique (webhook lookup)', pg_temp.has_index('PaymentTransaction', 'PaymentTransaction_stripePaymentIntentId_key', true, '%("stripePaymentIntentId")%')),
   ('PaymentTransaction cs_ id unique (webhook lookup)', pg_temp.has_index('PaymentTransaction', 'PaymentTransaction_stripeCheckoutSessionId_key', true, '%("stripeCheckoutSessionId")%')),
@@ -48,6 +54,28 @@ INSERT INTO results VALUES
   ('platform fee never exceeds the amount', pg_temp.has_constraint('PaymentTransaction', 'PaymentTransaction_fee_bounds', 'c')),
   ('one transfer per payment and recipient', pg_temp.has_index('PaymentTransfer', 'PaymentTransfer_paymentId_recipientType_key', true, '%')),
   ('webhook events stored once by evt_ id', pg_temp.has_constraint('StripeWebhookEvent', 'StripeWebhookEvent_pkey', 'p'));
+
+-- PlanCheckout rows that couldn't be provisioned safely are refused.
+INSERT INTO "User"(id, email, role, "updatedAt") VALUES ('contract_buyer', 'contract-buyer@example.test', 'STUDENT', now());
+DO $$
+BEGIN
+  BEGIN
+    INSERT INTO "PlanCheckout"(id, "userId", kind, tier, "updatedAt") VALUES ('pc1', 'contract_buyer', 'CLUB_SIGNUP', 'CLUB_BASIC', now());
+    INSERT INTO results VALUES ('CLUB_SIGNUP without the club''s details is refused', false);
+  EXCEPTION WHEN check_violation THEN INSERT INTO results VALUES ('CLUB_SIGNUP without the club''s details is refused', true);
+  END;
+  BEGIN
+    INSERT INTO "PlanCheckout"(id, "userId", kind, tier, "updatedAt") VALUES ('pc2', 'contract_buyer', 'COACH_PRO', 'CLUB_ENTERPRISE', now());
+    INSERT INTO results VALUES ('COACH_PRO can only buy PRO_COACH', false);
+  EXCEPTION WHEN check_violation THEN INSERT INTO results VALUES ('COACH_PRO can only buy PRO_COACH', true);
+  END;
+  BEGIN
+    INSERT INTO "PlanCheckout"(id, "userId", kind, tier, "clubName", "clubSlug", country, timezone, currency, "updatedAt")
+      VALUES ('pc3', 'contract_buyer', 'CLUB_SIGNUP', 'PRO_COACH', 'X', 'x-club', 'ES', 'Europe/Madrid', 'eur', now());
+    INSERT INTO results VALUES ('CLUB_SIGNUP can only buy a club plan', false);
+  EXCEPTION WHEN check_violation THEN INSERT INTO results VALUES ('CLUB_SIGNUP can only buy a club plan', true);
+  END;
+END $$;
 
 -- The planner can answer the overlap pre-check from an index, not a scan.
 SET LOCAL enable_seqscan = off;

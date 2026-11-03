@@ -9,6 +9,7 @@ import { db } from "@/db";
 import { club, clubMember, practiceSession, sessionParticipant } from "@/db/schema";
 import { isBookingConflict } from "@/db/errors";
 import { formValues, type ActionState } from "@/lib/action-state";
+import { canAddStudent, enforce, EntitlementError } from "@/lib/entitlements";
 import { requireOnboardedUser } from "@/modules/auth/dal";
 
 import { coachShareFor } from "../dal";
@@ -65,6 +66,8 @@ export async function bookSlot(_prev: ActionState, formData: FormData): Promise<
   for (const facilityId of slot.facilityIds) {
     try {
       bookedId = await db.transaction(async (tx) => {
+        // A Free Coach's roster is capped; a returning student never counts twice.
+        enforce(await canAddStudent(coach.userId, student.id, tx));
         const [created] = await tx
           .insert(practiceSession)
           .values({
@@ -88,6 +91,7 @@ export async function bookSlot(_prev: ActionState, formData: FormData): Promise<
       });
       break;
     } catch (e) {
+      if (e instanceof EntitlementError) return { error: `${coach.name ?? "This coach"} isn't taking new students right now.` };
       const constraint = isBookingConflict(e);
       if (constraint === "PracticeSession_coach_no_overlap") return { error: "Someone booked that slot a moment ago. Pick another one." };
       if (constraint) continue; // that facility was taken; try the next

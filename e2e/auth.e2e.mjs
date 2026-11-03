@@ -214,8 +214,14 @@ try {
   await page.getByText("Coach", { exact: true }).click();
   await page.getByLabel("Profile handle").fill("maria.coach");
   await page.getByRole("button", { name: "Continue" }).click();
+  await page.waitForURL((u) => u.pathname === "/onboarding/plan");
+  check(
+    (await page.getByRole("link", { name: "Continue with Free Coach" }).isVisible()) && (await page.getByRole("button", { name: "Upgrade to Pro Coach" }).isVisible()),
+    "onboarding as Coach → step 2 offers Free Coach or Pro Coach",
+  );
+  await page.getByRole("link", { name: "Continue with Free Coach" }).click();
   await page.waitForURL(`${APP}/dashboard/coach`);
-  check(true, "onboarding as Coach → /dashboard/coach");
+  check(true, "Free Coach → /dashboard/coach");
   await shot(page, "3-coach-dashboard");
 
   const { rows: users } = await db.query(`SELECT id, email, role, "onboardedAt" FROM "User" WHERE email LIKE '%@e2e.test'`);
@@ -272,6 +278,20 @@ try {
   await secondPage.waitForURL(`${APP}/dashboard/student`);
   check(true, "a free handle then completes onboarding (athlete by default)");
   const { rows: stored } = await db.query(`SELECT "displayName" FROM "Profile" WHERE handle = 'second.user'`);
+  // 5c. Choosing "Club owner" grants nothing until Stripe confirms a payment.
+  as({ sub: "google-sub-4", email: "owner@e2e.test", name: "Would-be Owner" });
+  const ownerPage = await signIn(await browser.newContext(), "google");
+  await confirmEmail(ownerPage, "owner@e2e.test");
+  await ownerPage.getByText("Club owner", { exact: true }).click();
+  await ownerPage.getByLabel("Profile handle").fill("would.be.owner");
+  await ownerPage.getByRole("button", { name: "Continue" }).click();
+  await ownerPage.waitForURL((u) => u.pathname === "/onboarding/plan" && u.searchParams.get("for") === "club");
+  check(await ownerPage.getByRole("form", { name: "Club plan and details" }).isVisible(), "Club owner → step 2 asks for Club Basic or Club Enterprise and the club's details");
+  const { rows: [wouldBe] } = await db.query(`SELECT role, "onboardedAt" FROM "User" WHERE email = 'owner@e2e.test'`);
+  check(wouldBe?.role === "STUDENT" && wouldBe.onboardedAt === null, "…and the account is not a club owner (nor onboarded) before paying");
+  await ownerPage.goto(`${APP}/dashboard/club`);
+  check(new URL(ownerPage.url()).pathname.startsWith("/onboarding"), "/dashboard/club stays closed until the plan is paid");
+
   check(stored[0]?.displayName === sqlName && (await db.query(`SELECT to_regclass('public."User"') IS NOT NULL AS ok`)).rows[0].ok, "an SQL payload as display name is stored as plain text; nothing is executed");
 
   // 6. Devices page lists both sessions; revoking one kills it immediately.

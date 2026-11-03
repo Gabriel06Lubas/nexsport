@@ -1,21 +1,22 @@
 import "server-only";
 
-import { and, eq, inArray, notInArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
-import type { Tx } from "@/db";
 import { isBookingConflict } from "@/db/errors";
-import { club, subscription, subscriptionPlan } from "@/db/schema";
 import type { ClubPermission } from "@/db/schema/enums";
 import type { ActionState } from "@/lib/action-state";
+import { EntitlementError, requireActiveSubscription, type Decision } from "@/lib/entitlements";
 
 import { requireClubAccess, type ClubAccess } from "../dal";
 
 // Shared guard for every club dashboard Server Action. Server Actions are
 // public HTTP endpoints, so each one re-checks, from scratch: the session,
-// membership of the club named in the form, the permission it needs, and
-// that the platform hasn't suspended the club. The club comes from the
-// form's `clubSlug`; every query below is then scoped to that club's id.
+// membership of the club named in the form, the permission it needs, that
+// the platform hasn't suspended the club, and that the club's subscription
+// is ACTIVE (or TRIALING): a PAST_DUE, CANCELED or missing subscription
+// blocks every write until it's fixed on the Billing page. The club comes
+// from the form's `clubSlug`; every query below is then scoped to that
+// club's id.
 
 export type WriteGuard = { access: ClubAccess } | { state: ActionState };
 
@@ -24,6 +25,12 @@ export async function guardClubWrite(formData: FormData, permission: ClubPermiss
   const access = await requireClubAccess(slug, permission === "OWNER" ? undefined : permission);
   if (permission === "OWNER" && access.role !== "OWNER") return { state: { error: "Only the club owner can do this." } };
   if (access.readOnly) return { state: { error: "This club is suspended by nexport, so nothing can be changed. Contact support." } };
+  try {
+    await requireActiveSubscription(access.club.id);
+  } catch (e) {
+    if (e instanceof EntitlementError) return { state: { error: e.message } };
+    throw e;
+  }
   return { access };
 }
 
@@ -46,25 +53,9 @@ export function conflictMessage(error: unknown): string | null {
   return constraint ? (conflictMessages[constraint] ?? "That conflicts with an existing booking.") : null;
 }
 
-/**
- * The club's plan limits: from its live subscription's plan, or the Club
- * Basic plan while it has none. Locks the Club row so two concurrent
- * additions can't both squeeze under the limit (READ COMMITTED: the counts
- * that follow see everything committed before the lock was granted).
- */
-export async function lockClubAndGetLimits(tx: Tx, clubId: string) {
-  await tx.select({ id: club.id }).from(club).where(eq(club.id, clubId)).for("update");
-  const [live] = await tx
-    .select({ tier: subscription.tier })
-    .from(subscription)
-    .where(and(eq(subscription.clubId, clubId), notInArray(subscription.status, ["CANCELED", "INCOMPLETE_EXPIRED"])))
-    .limit(1);
-  const tier = live && (live.tier === "CLUB_BASIC" || live.tier === "CLUB_ENTERPRISE") ? live.tier : "CLUB_BASIC";
-  const [plan] = await tx
-    .select({ name: subscriptionPlan.name, maxFacilities: subscriptionPlan.maxFacilities, maxStaff: subscriptionPlan.maxStaff, maxAthletes: subscriptionPlan.maxAthletes })
-    .from(subscriptionPlan)
-    .where(inArray(subscriptionPlan.tier, [tier]));
-  return plan ?? { name: "Club Basic", maxFacilities: null, maxStaff: null, maxAthletes: null };
-}
-
 export class LimitReached extends Error {}
+
+/** Aborts the surrounding transaction when a plan limit (or the subscription) says no. */
+export function enforceLimit(decision: Decision): void {
+  if (!decision.allowed) throw new LimitReached(decision.reason);
+}

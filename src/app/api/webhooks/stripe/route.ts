@@ -13,6 +13,7 @@ import {
   type SettleResult,
 } from "@/modules/payments/settle";
 import { getStripe, refundPayment } from "@/modules/payments/stripe";
+import { expirePlanCheckout, provisionFromCheckout, syncSubscription } from "@/modules/payments/subscriptions";
 
 // POST /api/webhooks/stripe
 //
@@ -67,6 +68,8 @@ async function handle(stripe: Stripe, event: Stripe.Event) {
       return refundIfLate(stripe, await settleIntent(event.data.object));
     case "checkout.session.completed":
     case "checkout.session.async_payment_succeeded":
+      // A plan purchase: verify with Stripe, then provision (club, role, subscription).
+      if (event.data.object.mode === "subscription") return provisionFromCheckout(stripe, event.data.object);
       return refundIfLate(stripe, await settleCheckout(event.data.object));
 
     // A declined card: recorded, the hold is kept for a retry until it expires.
@@ -77,7 +80,17 @@ async function handle(stripe: Stripe, event: Stripe.Event) {
     case "payment_intent.canceled":
       return releaseIntentHold(event.data.object);
     case "checkout.session.expired":
+      if (event.data.object.mode === "subscription") return expirePlanCheckout(event.data.object);
       return releaseCheckoutHold(event.data.object.id);
+
+    // Plan status changes (failed renewal → PAST_DUE, cancellation, plan
+    // change in the portal): what entitlements are computed from.
+    case "customer.subscription.created":
+    case "customer.subscription.updated":
+    case "customer.subscription.deleted":
+    case "customer.subscription.paused":
+    case "customer.subscription.resumed":
+      return syncSubscription(event.data.object);
 
     default:
       return; // recorded in the log, nothing to do

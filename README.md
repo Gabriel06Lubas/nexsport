@@ -18,6 +18,7 @@ Auth.js v5 (RBAC) · Tailwind + shadcn/ui · Stripe Billing + Stripe Connect
 | — | [Club dashboard](docs/club-dashboard.md): analytics, courts & dynamic pricing, equipment, bookings, memberships, staff & payroll, billing | ✅ |
 | — | [Coach dashboard](docs/coach-dashboard.md): schedule, students & credits, public booking link, earnings | ✅ |
 | — | [Student dashboard](docs/student-dashboard.md): schedule, bookings & refunds, open matches with Stripe split checkout, account | ✅ |
+| — | [Paid onboarding & plan entitlements](docs/onboarding.md): role → plan → Stripe Checkout, provisioning by webhook, limits and features enforced on the server | ✅ |
 | — | [Marketing website](#marketing-website) | ✅ |
 
 ## Quick start

@@ -30,19 +30,25 @@ export type PublicCoach = {
   sportName: string;
 };
 
-/** A coach whose public booking page is switched on, or null. */
+/**
+ * A coach whose public booking page is switched on, or null. The booking
+ * link is a Pro Coach feature: without a live PRO_COACH subscription the
+ * page is gone, even if bookingEnabled was left on when the plan lapsed.
+ */
 export async function getPublicCoach(slug: string) {
   const [coach] = await rows<PublicCoach>(sql`
     SELECT p."userId", u.name, p.slug, p.headline, p.bio, p."privateRateAmount", p."groupRateAmount", p.currency,
            p."sessionMinutes", p."minNoticeHours", p."maxAdvanceDays", p."sportId", s.name AS "sportName"
       FROM "CoachProfile" p JOIN "User" u ON u.id = p."userId" JOIN "Sport" s ON s.id = p."sportId"
-     WHERE p.slug = ${slug} AND p."bookingEnabled" AND u.role = 'COACH' AND u."suspendedAt" IS NULL AND u."deletedAt" IS NULL`);
+     WHERE p.slug = ${slug} AND p."bookingEnabled" AND u.role = 'COACH' AND u."suspendedAt" IS NULL AND u."deletedAt" IS NULL
+       AND EXISTS (SELECT 1 FROM "Subscription" sub WHERE sub."userId" = p."userId" AND sub.tier = 'PRO_COACH' AND sub.status IN ('ACTIVE', 'TRIALING'))`);
   return coach ?? null;
 }
 
 /**
  * Open slots for a coach right now. Only windows at clubs where the coach is
- * still an active coach and the club is open for business count.
+ * still an active coach and the club is open for business (not suspended,
+ * with an ACTIVE or TRIALING nexport subscription) count.
  */
 export async function getOpenSlots(coach: Pick<PublicCoach, "userId" | "sessionMinutes" | "minNoticeHours" | "maxAdvanceDays">, now = new Date()) {
   const windows = await rows<SlotWindow>(sql`
@@ -50,7 +56,8 @@ export async function getOpenSlots(coach: Pick<PublicCoach, "userId" | "sessionM
       FROM "CoachAvailability" w
       JOIN "Club" c ON c.id = w."clubId" AND c."deletedAt" IS NULL AND c.status IN ('ACTIVE', 'PENDING_SETUP')
       JOIN "ClubMember" m ON m."clubId" = w."clubId" AND m."userId" = w."coachId" AND m.role = 'COACH' AND m.status = 'ACTIVE'
-     WHERE w."coachId" = ${coach.userId}`);
+     WHERE w."coachId" = ${coach.userId}
+       AND EXISTS (SELECT 1 FROM "Subscription" sub WHERE sub."clubId" = w."clubId" AND sub.status IN ('ACTIVE', 'TRIALING'))`);
   if (windows.length === 0) return [];
   const clubIds = sql.join([...new Set(windows.map((w) => w.clubId))].map((id) => sql`${id}`), sql`, `);
   const until = new Date(now.getTime() + (coach.maxAdvanceDays + 1) * 86_400_000);

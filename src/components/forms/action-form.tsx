@@ -134,6 +134,21 @@ export function CheckboxField({ name, label, hint, value = "on", defaultChecked 
 }
 
 /** A group of checkboxes sharing one name (repeated values in FormData). */
+/** The ActionForm's last result, for custom controls inside it (e.g. radio cards). */
+export function useActionFormState(): ActionState {
+  return useContext(FormState).state;
+}
+
+/** A field-level error for controls that aren't a Field (radio cards, …). */
+export function FieldError({ name }: { name: string }) {
+  const error = useActionFormState().fieldErrors?.[name];
+  return error ? (
+    <span role="alert" className="mt-1 block text-xs text-danger">
+      {error}
+    </span>
+  ) : null;
+}
+
 export function CheckboxGroup({ name, legend, options, defaultValues = [] }: { name: string; legend: string; options: readonly { value: string; label: string }[]; defaultValues?: readonly string[] }) {
   const { state } = useContext(FormState);
   const error = state.fieldErrors?.[name];

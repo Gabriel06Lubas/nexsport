@@ -3,10 +3,13 @@ import type { Metadata, Route } from "next";
 import Link from "next/link";
 
 import { ConnectBadge, EmptyState, formatDate, KpiCard, PageHeader, Pagination, Panel, StatusBadge, TableWrap, td, th } from "@/components/dashboard/ui";
+import { ActionButton } from "@/components/forms/action-form";
 import { Badge } from "@/components/ui/badge";
+import { planCurrency, planFactsFor } from "@/config/pricing";
 import { parseListParams, pickParam } from "@/lib/list-params";
 import { cn, formatMoney } from "@/lib/utils";
-import { requireClubSection } from "@/modules/clubs/dal";
+import { getClubPlan, requireClubSection } from "@/modules/clubs/dal";
+import { openClubBillingPortal, startClubSubscriptionCheckout } from "@/modules/onboarding/actions";
 import { getConnectAccount, getMoneyFlow, listTransactions, TX_KINDS, type TxKind } from "@/modules/clubs/queries/billing";
 
 export const metadata: Metadata = { title: "Billing & Stripe Connect" };
@@ -14,6 +17,15 @@ export const metadata: Metadata = { title: "Billing & Stripe Connect" };
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 const kindLabels: Record<TxKind, string> = { all: "All", SESSION: "Coached sessions", COURT_RENTAL: "Court rentals", MEMBERSHIP: "Memberships" };
+
+const planStatusLabels: Record<string, string> = {
+  PAST_DUE: "Past due",
+  CANCELED: "Cancelled",
+  UNPAID: "Unpaid",
+  INCOMPLETE: "Incomplete",
+  INCOMPLETE_EXPIRED: "Expired",
+  PAUSED: "Paused",
+};
 
 function Check({ ok, label }: { ok: boolean; label: string }) {
   return (
@@ -33,13 +45,63 @@ export default async function BillingPage({ params, searchParams }: { params: Pr
   const sp = await searchParams;
   const kind = pickParam(sp.kind, TX_KINDS, "all");
   const { page } = parseListParams(sp);
-  const [account, flow, { txs, total }] = await Promise.all([getConnectAccount(club.id), getMoneyFlow(club), listTransactions(club.id, { kind, page })]);
+  const [plan, account, flow, { txs, total }] = await Promise.all([
+    getClubPlan(club.id),
+    getConnectAccount(club.id),
+    getMoneyFlow(club),
+    listTransactions(club.id, { kind, page }),
+  ]);
+  // A subscription that can still be managed in Stripe's portal, vs one that's over and needs a new Checkout.
+  const live = plan.status !== null && plan.status !== "CANCELED" && plan.status !== "INCOMPLETE_EXPIRED";
+  const owner = access.role === "OWNER";
   const money = (n: number, currency = club.currency) => formatMoney(n, currency);
   const base = `/dashboard/${club.slug}/billing`;
 
   return (
     <div className="space-y-6">
       <PageHeader title="Billing & Stripe Connect" description="Your connected Stripe account, where each payment's money went, and payouts to your bank." />
+
+      <Panel
+        title="nexport plan"
+        action={
+          plan.status ? (
+            <Badge variant={plan.active ? "success" : "danger"}>{plan.active ? (plan.status === "TRIALING" ? "Trial" : "Active") : (planStatusLabels[plan.status] ?? plan.status)}</Badge>
+          ) : (
+            <Badge variant="danger">No plan</Badge>
+          )
+        }
+      >
+        <div className="space-y-4 p-5 text-sm">
+          {sp.checkout === "cancelled" && <p role="status" className="rounded-xl bg-muted px-4 py-3">Payment cancelled. Nothing was charged.</p>}
+          {plan.active ? (
+            <p>
+              <span className="font-medium">{plan.planName}</span>: the dashboard, online bookings and every feature in your plan are on.
+            </p>
+          ) : (
+            <p className="text-danger">
+              {plan.status
+                ? `The ${plan.planName ?? ""} subscription is ${planStatusLabels[plan.status]?.toLowerCase() ?? plan.status.toLowerCase()}, so the dashboard and online bookings are paused.`
+                : "This club has no plan, so the dashboard and online bookings are paused."}{" "}
+              {live ? "Update the payment method to restore access." : "Choose a plan to restore access."}
+            </p>
+          )}
+          {!owner ? (
+            <p className="text-muted-foreground">Only the club owner can change the plan.</p>
+          ) : live ? (
+            <ActionButton action={openClubBillingPortal} hidden={{ clubSlug: club.slug }} variant="primary" pendingLabel="Opening Stripe…">
+              Manage billing
+            </ActionButton>
+          ) : (
+            <div className="flex flex-wrap gap-3">
+              {(["CLUB_BASIC", "CLUB_ENTERPRISE"] as const).map((tier) => (
+                <ActionButton key={tier} action={startClubSubscriptionCheckout} hidden={{ clubSlug: club.slug, tier }} variant={tier === "CLUB_BASIC" ? "outline" : "primary"} pendingLabel="Opening checkout…">
+                  {`Choose ${planFactsFor(tier).name} · ${formatMoney(planFactsFor(tier).monthlyPriceAmount, planCurrency).replace(/\.00$/, "")}/mo`}
+                </ActionButton>
+              ))}
+            </div>
+          )}
+        </div>
+      </Panel>
 
       <Panel title="Stripe Connect account" action={<ConnectBadge status={account?.status ?? null} chargesEnabled={account?.chargesEnabled ?? null} payoutsEnabled={account?.payoutsEnabled ?? null} />}>
         {!account ? (

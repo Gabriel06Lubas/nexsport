@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { bpsToInput, centsToInput, formatBps } from "@/lib/money-input";
 import { formatMoney } from "@/lib/utils";
 import { addStaffMember, removeFromRoster, setPermissions, updatePay } from "@/modules/clubs/actions/staff";
-import { can, requireClubSection, type ClubAccess } from "@/modules/clubs/dal";
+import { can, getClubPlan, requireClubSection, type ClubAccess } from "@/modules/clubs/dal";
 import { monthSchema } from "@/modules/clubs/lib/forms";
 import { allClubPermissions, permissionLabels } from "@/modules/clubs/lib/permissions";
 import { addDays } from "@/modules/clubs/lib/zoned-time";
@@ -32,9 +32,11 @@ export default async function StaffPage({ params, searchParams }: { params: Prom
   const raw = (await searchParams).month;
   const thisMonth = currentMonth(club.timezone);
   const month = monthSchema.safeParse(raw).success && (raw as string) <= thisMonth ? (raw as string) : thisMonth;
-  const [roster, payroll] = await Promise.all([listRoster(club.id), getPayroll(club, month)]);
-  const lineFor = payrollLookup(roster, payroll);
+  const [roster, payrollLines] = await Promise.all([listRoster(club.id), getPayroll(club, month)]);
+  const lineFor = payrollLookup(roster, payrollLines);
   const billing = can(access, "MANAGE_BILLING");
+  // Payroll and commission reports are Club Enterprise.
+  const payroll = (await getClubPlan(club.id)).features.includes("payroll");
   const members = can(access, "MANAGE_MEMBERS");
   const owner = access.role === "OWNER";
   const writable = !access.readOnly;
@@ -140,7 +142,19 @@ export default async function StaffPage({ params, searchParams }: { params: Prom
         )}
       </Panel>
 
-      {billing && (
+      {billing && !payroll && (
+        <Panel title="Payroll & commissions">
+          <div className="space-y-2 p-5 text-sm">
+            <p className="font-medium">Monthly payout reports are part of Club Enterprise.</p>
+            <p className="text-muted-foreground">Wages due per employee, coach commissions and the Stripe split of every session, with a CSV for your accountant.</p>
+            <Link href={`/dashboard/${club.slug}/billing` as Route} className="inline-block font-medium text-accent-text hover:underline">
+              Upgrade in Billing
+            </Link>
+          </div>
+        </Panel>
+      )}
+
+      {billing && payroll && (
         <Panel
           title={`Payout report · ${monthTitle(month)}`}
           action={

@@ -1,4 +1,4 @@
-import { Gauge, IdCard, Users, Wallet } from "lucide-react";
+import { Gauge, IdCard, Lock, Users, Wallet } from "lucide-react";
 import type { Metadata, Route } from "next";
 import Link from "next/link";
 
@@ -6,19 +6,53 @@ import { KpiCard, PageHeader, Panel } from "@/components/dashboard/ui";
 import { formatMoney } from "@/lib/utils";
 import { OccupancyHeatmap } from "@/modules/clubs/components/occupancy-heatmap";
 import { RevenueChart } from "@/modules/clubs/components/revenue-chart";
-import { can, requireClubAccess } from "@/modules/clubs/dal";
+import { can, getClubPlan, requireClubAccess } from "@/modules/clubs/dal";
 import { canOpenSection, clubSections } from "@/modules/clubs/lib/permissions";
 import { getMemberStats, getOccupancyHeatmap, getRevenueByMonth, getUtilisation } from "@/modules/clubs/queries/overview";
 
 export const metadata: Metadata = { title: "Club overview" };
 
 const percent = (value: number | null) => (value === null ? "—" : `${(value * 100).toFixed(1)}%`);
+const subscriptionWords: Record<string, string> = {
+  PAST_DUE: "past due",
+  CANCELED: "cancelled",
+  UNPAID: "unpaid",
+  INCOMPLETE: "waiting for its first payment",
+  INCOMPLETE_EXPIRED: "expired",
+  PAUSED: "paused",
+};
 const hours = (value: number) => `${Math.round(value).toLocaleString("en")} h`;
 
 export default async function ClubOverviewPage({ params }: { params: Promise<{ clubSlug: string }> }) {
   const { clubSlug } = await params;
   const access = await requireClubAccess(clubSlug);
   const { club } = access;
+  const plan = await getClubPlan(club.id);
+
+  // No live subscription: every other section redirects here, and every
+  // action refuses (guardClubWrite). Say why, and where to fix it.
+  if (!plan.active) {
+    const billing = canOpenSection(access, "billing");
+    return (
+      <div className="space-y-6">
+        <PageHeader title={club.name} description="This club's dashboard is locked." />
+        <div role="alert" className="flex items-start gap-3 rounded-2xl border border-danger/30 bg-danger-soft p-5 text-sm">
+          <Lock className="mt-0.5 size-4 shrink-0 text-danger" aria-hidden />
+          <div className="space-y-2">
+            <p className="font-semibold">{plan.status ? `The ${plan.planName ?? "club"} subscription is ${subscriptionWords[plan.status] ?? plan.status.toLowerCase()}.` : "This club has no plan yet."}</p>
+            <p>Courts, sessions, memberships and online bookings are paused until the subscription is active again. Your data is kept.</p>
+            {billing ? (
+              <Link href={`/dashboard/${club.slug}/billing` as Route} className="inline-flex h-9 items-center rounded-full bg-ink px-4 font-semibold text-ink-foreground">
+                Go to billing
+              </Link>
+            ) : (
+              <p className="text-muted-foreground">Ask the club owner to update the club&apos;s billing.</p>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (!can(access, "VIEW_ANALYTICS")) {
     const sections = clubSections.filter((s) => s.key !== "overview" && canOpenSection(access, s.key));
@@ -39,11 +73,13 @@ export default async function ClubOverviewPage({ params }: { params: Promise<{ c
     );
   }
 
+  // Peak-hour heatmaps are Club Enterprise analytics; Basic gets utilisation.
+  const advanced = plan.features.includes("advanced_analytics");
   const [utilisation, revenue, members, heatmap] = await Promise.all([
     getUtilisation(club),
     getRevenueByMonth(club),
     getMemberStats(club),
-    getOccupancyHeatmap(club),
+    advanced ? getOccupancyHeatmap(club) : null,
   ]);
   const money = (n: number) => formatMoney(n, club.currency);
   const sum = (p: (typeof revenue)[number] | undefined) => (p ? p.rentals + p.coaching + p.memberships : 0);
@@ -88,7 +124,19 @@ export default async function ClubOverviewPage({ params }: { params: Promise<{ c
           <RevenueChart data={revenue} currency={club.currency} />
         </Panel>
         <Panel title="Peak hours, last 4 weeks">
-          <OccupancyHeatmap cells={heatmap.cells} facilities={heatmap.facilities} fromHour={heatmap.fromHour} toHour={heatmap.toHour} />
+          {heatmap ? (
+            <OccupancyHeatmap cells={heatmap.cells} facilities={heatmap.facilities} fromHour={heatmap.fromHour} toHour={heatmap.toHour} />
+          ) : (
+            <div className="space-y-2 p-5 text-sm">
+              <p className="font-medium">Occupancy heatmaps are part of Club Enterprise.</p>
+              <p className="text-muted-foreground">See your busiest hours per court and day of the week, and price them accordingly.</p>
+              {canOpenSection(access, "billing") && (
+                <Link href={`/dashboard/${club.slug}/billing` as Route} className="inline-block font-medium text-accent-text hover:underline">
+                  Upgrade in Billing
+                </Link>
+              )}
+            </div>
+          )}
         </Panel>
       </div>
 

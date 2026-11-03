@@ -8,6 +8,7 @@ import { db } from "@/db";
 import { isUniqueViolation } from "@/db/errors";
 import { coachAvailability, coachProfile, facility, sport } from "@/db/schema";
 import { formValues, invalid, type ActionState } from "@/lib/action-state";
+import { hasCoachFeature } from "@/lib/entitlements";
 import { idSchema } from "@/lib/validation";
 
 import { getCoachClubs, getCoachProfile, requireCoach } from "../dal";
@@ -29,6 +30,8 @@ export async function saveProfile(_prev: ActionState, formData: FormData): Promi
     if (!found) return fail("sportId", "Pick a sport");
   }
   if (p.bookingEnabled) {
+    // The public booking link is a Pro Coach feature.
+    if (!(await hasCoachFeature(coach.id, "booking_link"))) return fail("bookingEnabled", "A public booking link is part of Pro Coach. Upgrade to switch it on");
     if (p.privateRate === null) return fail("privateRate", "Set a private rate before opening bookings");
     if (!p.sportId) return fail("sportId", "Pick the sport students book you for");
     const [{ n = 0 } = {}] = await db.select({ n: count() }).from(coachAvailability).where(eq(coachAvailability.coachId, coach.id));

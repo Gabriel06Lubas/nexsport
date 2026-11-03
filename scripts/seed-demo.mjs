@@ -97,7 +97,7 @@ try {
       );
     }
     if (tier) {
-      const amount = tier === "CLUB_ENTERPRISE" ? 14900 : 4900;
+      const amount = tier === "CLUB_ENTERPRISE" ? 29900 : 9900;
       await q(
         `INSERT INTO "Subscription"(id, "clubId", tier, status, "stripeCustomerId", "stripeSubscriptionId", "stripePriceId", "monthlyAmount",
            "platformFeeBps", "currentPeriodStart", "currentPeriodEnd", "createdAt", "updatedAt")
@@ -143,7 +143,7 @@ try {
       await q(
         `INSERT INTO "Subscription"(id, "userId", tier, status, "stripeCustomerId", "stripeSubscriptionId", "stripePriceId", "monthlyAmount",
            "platformFeeBps", "currentPeriodStart", "currentPeriodEnd", "createdAt", "updatedAt")
-         VALUES ($1, $2, $3, $4, $5, $6, 'price_demoprocoach', 2900, 500, now() - interval '5 days', now() + interval '25 days', $7, now())`,
+         VALUES ($1, $2, $3, $4, $5, $6, 'price_demoprocoach', 2900, 300, now() - interval '5 days', now() + interval '25 days', $7, now())`,
         [`demosubc${n}`, id, tier, subStatus, `cus_democ${n}`, `sub_democ${n}`, daysAgo(80 - i * 12)],
       );
     }
