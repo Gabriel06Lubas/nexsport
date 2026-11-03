@@ -78,6 +78,13 @@
       "when": 1793482224300,
       "tag": "0010_court_payments",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1793700319623,
+      "tag": "0011_finalize_plans",
+      "breakpoints": true
     }
   ]
 }

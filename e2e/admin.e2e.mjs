@@ -86,12 +86,13 @@ const cleanup = async () => {
   await db.query(`DELETE FROM "EmailCode" WHERE email = $1 OR email LIKE '%@demo.nexport.test'`, [ADMIN_EMAIL]);
 };
 await cleanup();
-// Start from the plan values migration 0004 seeds, whatever earlier runs saved.
+// Start from the published plans (migration 0011 / src/config/plans.json),
+// whatever earlier runs saved.
 await db.query(`
-  UPDATE "SubscriptionPlan" p SET name = d.name, "monthlyPriceAmount" = d.price, "platformFeeBps" = d.fee, "stripePriceId" = NULL,
+  UPDATE "SubscriptionPlan" p SET name = d.name, "monthlyPriceAmount" = d.price, currency = 'usd', "platformFeeBps" = d.fee, "stripePriceId" = NULL,
          "isActive" = d.active, "updatedById" = NULL, "updatedAt" = now()
-    FROM (VALUES ('FREE_COACH', 'Free Coach', 0, 1000, true), ('PRO_COACH', 'Pro Coach', 2900, 500, false),
-                 ('CLUB_BASIC', 'Club Basic', 4900, 600, false), ('CLUB_ENTERPRISE', 'Club Enterprise', 14900, 300, false))
+    FROM (VALUES ('FREE_COACH', 'Free Coach', 0, 500, true), ('PRO_COACH', 'Pro Coach', 2900, 300, false),
+                 ('CLUB_BASIC', 'Club Basic', 9900, 600, false), ('CLUB_ENTERPRISE', 'Club Enterprise', 29900, 300, false))
          AS d(tier, name, price, fee, active)
    WHERE p.tier::text = d.tier`);
 // The documented way to create an admin: insert the row directly.
@@ -241,7 +242,7 @@ try {
   const saved = await one(`SELECT "monthlyPriceAmount", "platformFeeBps", "stripePriceId", "isActive", "updatedById" FROM "SubscriptionPlan" WHERE tier = 'PRO_COACH'`);
   check(
     saved.monthlyPriceAmount === 3490 && saved.platformFeeBps === 450 && saved.stripePriceId === "price_1TestProCoach01" && saved.isActive && saved.updatedById === "e2eadmin01",
-    "plan saved exactly (€34.90, 4.5%, price id, active, who changed it)",
+    "plan saved exactly ($34.90, 4.5%, price id, active, who changed it)",
   );
   const audited = await one(`SELECT details FROM "AdminAuditLog" WHERE action = 'PLAN_UPDATED' AND "targetId" = 'PRO_COACH' ORDER BY "createdAt" DESC LIMIT 1`);
   check(audited?.details?.monthlyPriceAmount?.from === 2900 && audited.details.monthlyPriceAmount.to === 3490, "the audit log records the before/after values");

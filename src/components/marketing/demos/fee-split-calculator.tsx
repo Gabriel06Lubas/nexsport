@@ -2,25 +2,24 @@
 
 import { useId, useState } from "react";
 
-import { tiers } from "@/config/pricing";
+import { feePlans } from "@/config/pricing";
 import { formatMoney } from "@/lib/utils";
 import { estimateProcessingFee, splitSessionPayment } from "@/modules/billing/lib/fee-split";
 
-const payTiers = tiers.filter((t) => t.platformFeeBps !== null);
 
 export function FeeSplitCalculator() {
   const id = useId();
   const [price, setPrice] = useState(30);
-  const [tierId, setTierId] = useState("PRO");
+  const [tierId, setTierId] = useState("CLUB_BASIC");
   const [coachShare, setCoachShare] = useState(70);
   const [cardPct, setCardPct] = useState(1.5);
   const [cardFixed, setCardFixed] = useState(0.25);
 
-  const tier = payTiers.find((t) => t.id === tierId) ?? payTiers[0]!;
+  const tier = feePlans.find((t) => t.tier === tierId) ?? feePlans[0]!;
   const amount = Math.max(Math.round(price * 100), 1);
   const split = splitSessionPayment({
     amount,
-    platformFeeBps: tier.platformFeeBps ?? 0,
+    platformFeeBps: tier.platformFeeBps,
     coachShareBps: coachShare * 100,
     processingFee: estimateProcessingFee(amount, Math.round(cardPct * 100), Math.round(cardFixed * 100)),
   });
@@ -28,7 +27,7 @@ export function FeeSplitCalculator() {
   const rows = [
     { label: "Coach payout", value: split.coachAmount, note: `${coachShare}% of the net` },
     { label: "Club payout", value: split.clubAmount, note: "The rest of the net" },
-    { label: `Platform fee (${tier.name})`, value: split.platformFee, note: `${(tier.platformFeeBps ?? 0) / 100}%` },
+    { label: `Platform fee (${tier.name})`, value: split.platformFee, note: `${tier.platformFeeBps / 100}%` },
     { label: "Card processing", value: split.processingFee, note: "Charged by Stripe" },
   ];
 
@@ -44,9 +43,9 @@ export function FeeSplitCalculator() {
         <label className="text-sm" htmlFor={`${id}-tier`}>
           <span className="text-muted-foreground">Plan</span>
           <select id={`${id}-tier`} value={tierId} onChange={(e) => setTierId(e.target.value)} className={field}>
-            {payTiers.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}: {(t.platformFeeBps ?? 0) / 100}% fee
+            {feePlans.map((t) => (
+              <option key={t.tier} value={t.tier}>
+                {t.name}: {t.platformFeeBps / 100}% fee
               </option>
             ))}
           </select>

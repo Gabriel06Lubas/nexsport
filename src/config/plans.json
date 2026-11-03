@@ -1,0 +1,42 @@
+{
+  "$comment": "The SaaS plans: one source for the pricing page, the fee calculator, migration 0011 and scripts/stripe-plans.mjs. Amounts in minor units (2900 = 29.00), fees in basis points (300 = 3%), limits null = unlimited.",
+  "currency": "usd",
+  "plans": [
+    {
+      "tier": "FREE_COACH",
+      "name": "Free Coach",
+      "audience": "COACH",
+      "monthlyPriceAmount": 0,
+      "platformFeeBps": 500,
+      "limits": { "maxFacilities": 0, "maxStaff": 0, "maxAthletes": 15 },
+      "stripePriceEnv": null
+    },
+    {
+      "tier": "PRO_COACH",
+      "name": "Pro Coach",
+      "audience": "COACH",
+      "monthlyPriceAmount": 2900,
+      "platformFeeBps": 300,
+      "limits": { "maxFacilities": 0, "maxStaff": 0, "maxAthletes": null },
+      "stripePriceEnv": "STRIPE_PRICE_PRO_COACH"
+    },
+    {
+      "tier": "CLUB_BASIC",
+      "name": "Club Basic",
+      "audience": "CLUB",
+      "monthlyPriceAmount": 9900,
+      "platformFeeBps": 600,
+      "limits": { "maxFacilities": 5, "maxStaff": 10, "maxAthletes": 300 },
+      "stripePriceEnv": "STRIPE_PRICE_CLUB_BASIC"
+    },
+    {
+      "tier": "CLUB_ENTERPRISE",
+      "name": "Club Enterprise",
+      "audience": "CLUB",
+      "monthlyPriceAmount": 29900,
+      "platformFeeBps": 300,
+      "limits": { "maxFacilities": null, "maxStaff": null, "maxAthletes": null },
+      "stripePriceEnv": "STRIPE_PRICE_CLUB_ENTERPRISE"
+    }
+  ]
+}

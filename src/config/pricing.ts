@@ -1,54 +1,138 @@
-// Marketing copy for the SaaS tiers in the `SubscriptionTier` enum.
-// Prices are placeholders until the Stripe Prices are created.
+import type { SubscriptionTier } from "@/db/schema/enums";
 
-export type Tier = {
-  id: "FREE" | "STARTER" | "PRO" | "ENTERPRISE";
+import plansFile from "./plans.json";
+
+// The pricing page: who each plan is for, what it includes, and where its
+// button goes. Numbers (price, platform fee, limits) come from plans.json,
+// the same file migration 0011 and `npm run stripe:plans` use, so the page,
+// the database and Stripe can't disagree.
+
+export type PlanFacts = {
+  tier: SubscriptionTier;
   name: string;
-  audience: string;
-  monthly: number | null; // EUR per month; null = custom
-  /** Platform fee on pay-per-session bookings, in basis points (Subscription.platformFeeBps). */
-  platformFeeBps: number | null;
-  highlights: string[];
-  cta: string;
+  audience: "COACH" | "CLUB";
+  monthlyPriceAmount: number;
+  platformFeeBps: number;
+  limits: { maxFacilities: number | null; maxStaff: number | null; maxAthletes: number | null };
+  stripePriceEnv: string | null;
+};
+
+export const planCurrency = plansFile.currency;
+export const planFacts = plansFile.plans as PlanFacts[];
+
+const facts = (tier: SubscriptionTier) => planFacts.find((p) => p.tier === tier)!;
+const pct = (bps: number) => `${(bps / 100).toLocaleString("en", { maximumFractionDigits: 2 })}%`;
+
+export type Segment = "coaches" | "clubs" | "athletes";
+
+export type PricingCard = {
+  id: SubscriptionTier | "ATHLETE_FREE";
+  segment: Segment;
+  name: string;
+  tagline: string;
+  /** Minor units per month. */
+  monthlyPriceAmount: number;
+  badge?: string;
+  /** "Everything in Free, plus:" */
+  includesPrevious?: string;
+  features: string[];
+  cta: { label: string; href: string };
   featured?: boolean;
 };
 
-export const tiers: Tier[] = [
+export const segments: { id: Segment; label: string; short: string; description: string }[] = [
+  { id: "coaches", label: "Independent coaches", short: "Coaches", description: "Run your own coaching business: schedule, get paid and grow your roster." },
+  { id: "clubs", label: "Clubs & facilities", short: "Clubs", description: "Courts, fields, staff, memberships and payouts for sports facilities." },
+  { id: "athletes", label: "Athletes", short: "Athletes", description: "Book courts and coaches, join open matches and manage your passes." },
+];
+
+const free = facts("FREE_COACH");
+const pro = facts("PRO_COACH");
+const basic = facts("CLUB_BASIC");
+const enterprise = facts("CLUB_ENTERPRISE");
+
+export const pricingCards: PricingCard[] = [
   {
-    id: "FREE",
-    name: "Free",
-    audience: "Independent coaches getting started",
-    monthly: 0,
-    platformFeeBps: 1000,
-    highlights: ["1 coach profile", "Unlimited session invites", "Attendance & feedback", "Social profile & feed", "Stripe payouts"],
-    cta: "Start free",
+    id: "FREE_COACH",
+    segment: "coaches",
+    name: free.name,
+    tagline: "Everything you need to start coaching on nexport.",
+    monthlyPriceAmount: free.monthlyPriceAmount,
+    features: [
+      "1 Coach License",
+      `Up to ${free.limits.maxAthletes} active students`,
+      "Basic practice session scheduling (private sessions)",
+      "Attendance tracking (Present / Absent / Late)",
+      `Standard Stripe Connect processing (${pct(free.platformFeeBps)} platform fee)`,
+    ],
+    cta: { label: "Start free", href: "/login?plan=FREE_COACH" },
   },
   {
-    id: "STARTER",
-    name: "Starter",
-    audience: "Small clubs and coaching teams",
-    monthly: 49,
-    platformFeeBps: 600,
-    highlights: ["Up to 4 facilities", "Up to 10 staff & coaches", "Equipment inventory", "Cancellation policies", "Group messaging"],
-    cta: "Start 14-day trial",
-  },
-  {
-    id: "PRO",
-    name: "Pro",
-    audience: "Established multi-sport clubs",
-    monthly: 149,
-    platformFeeBps: 300,
-    highlights: ["Unlimited facilities", "Unlimited staff & coaches", "Revenue & utilisation analytics", "Granular staff permissions", "Coach revenue splits"],
-    cta: "Start 14-day trial",
+    id: "PRO_COACH",
+    segment: "coaches",
+    name: pro.name,
+    tagline: "For full-time coaches who sell sessions online.",
+    monthlyPriceAmount: pro.monthlyPriceAmount,
+    badge: "Popular for Coaches",
     featured: true,
+    includesPrevious: `Everything in ${free.name.replace(" Coach", "")}, plus:`,
+    features: [
+      "Unlimited active students",
+      "Public self-serve booking URL (nexport.com/coach/your-name)",
+      "Session credit passes & punch card sales",
+      `Reduced platform fee (${pct(pro.platformFeeBps)})`,
+      "Automated email & in-app reminders",
+    ],
+    cta: { label: "Get Pro Coach", href: "/login?plan=PRO_COACH" },
   },
   {
-    id: "ENTERPRISE",
-    name: "Enterprise",
-    audience: "Federations, academies and chains",
-    monthly: null,
-    platformFeeBps: null,
-    highlights: ["Multiple clubs, one account", "Custom platform fee", "Custom Stripe Connect setup", "Priority support & onboarding", "Data export"],
-    cta: "Talk to us",
+    id: "CLUB_BASIC",
+    segment: "clubs",
+    name: basic.name,
+    tagline: "Run a club or facility from one dashboard.",
+    monthlyPriceAmount: basic.monthlyPriceAmount,
+    badge: "Popular for Clubs",
+    featured: true,
+    features: [
+      `Up to ${basic.limits.maxFacilities} courts or fields`,
+      "Multi-role team access (Owners & Staff)",
+      "Dynamic pricing engine (peak vs. off-peak hourly rates)",
+      "Equipment inventory tracking & maintenance logs",
+      "Facility utilization metrics & revenue reports",
+    ],
+    cta: { label: "Get Club Basic", href: "/login?plan=CLUB_BASIC" },
+  },
+  {
+    id: "CLUB_ENTERPRISE",
+    segment: "clubs",
+    name: enterprise.name,
+    tagline: "For multi-court venues, academies and chains.",
+    monthlyPriceAmount: enterprise.monthlyPriceAmount,
+    includesPrevious: `Everything in ${basic.name.replace("Club ", "")}, plus:`,
+    features: [
+      "Unlimited courts, fields, and locations",
+      "Advanced analytics & occupancy heatmaps",
+      "Staff payroll & coach commission split tracking",
+      "Open match split-payment system",
+      "Priority support & dedicated onboarding",
+    ],
+    cta: { label: "Get Club Enterprise", href: "/login?plan=CLUB_ENTERPRISE" },
+  },
+  {
+    id: "ATHLETE_FREE",
+    segment: "athletes",
+    name: "Free",
+    tagline: "Always free for players. Pay only for what you book.",
+    monthlyPriceAmount: 0,
+    features: [
+      "Free account creation",
+      "Pay-per-booking court rentals & private coaching",
+      "Open match finder with split payment checkout",
+      "Multi-session credit pass management",
+    ],
+    cta: { label: "Create free account", href: "/login" },
   },
 ];
+
+/** Plans with a platform fee, for the payout calculator. */
+export const feePlans = planFacts.map((p) => ({ tier: p.tier, name: p.name, platformFeeBps: p.platformFeeBps }));

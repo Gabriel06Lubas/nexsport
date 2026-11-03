@@ -111,14 +111,36 @@ support:
 
 ## Plans
 
-Plans live in `SubscriptionPlan` (seeded by migration `0004`; prices are
-placeholders). Paid plans start **inactive**: a paid plan can't be active
-without a Stripe Price ID, which the app and a database CHECK both enforce,
-because it couldn't be sold. Stripe Prices can't be edited, so to change what
-new customers pay you create a new Price in Stripe and paste its ID together
-with the new amount. Limits left blank mean unlimited; the club dashboard
-enforces `maxFacilities`, `maxStaff` and `maxAthletes` (see
-[club-dashboard.md](club-dashboard.md)).
+The published plans (the pricing page at `/pricing`) are defined once, in
+`src/config/plans.json`: price, currency, platform fee and limits for each
+tier. Migration `0011` puts the same values in `SubscriptionPlan`, and a unit
+test fails if the two drift.
+
+| Plan | Price | Platform fee | Limits enforced |
+| --- | --- | --- | --- |
+| Free Coach | $0 | 5% | 15 active students |
+| Pro Coach | $29/mo | 3% | none |
+| Club Basic | $99/mo | 6% | 5 courts/fields, 10 staff & coaches, 300 members |
+| Club Enterprise | $299/mo | 3% | none |
+
+Athlete accounts are free and have no plan row.
+
+To sell a paid plan it needs a Stripe Price (a paid plan can't be active
+without one; the app and a database CHECK both enforce that):
+
+```bash
+npm run stripe:plans -- --create   # test mode: creates Products + monthly Prices, prints STRIPE_PRICE_* lines
+# paste them into .env, then:
+npm run stripe:plans               # checks each Price matches plans.json, stores it, puts the plan on sale
+```
+
+The sync refuses a Price that doesn't match the plan (amount, currency,
+monthly, active), and takes a mismatched plan off sale instead of selling it
+at a price the pricing page doesn't show. Stripe Prices can't be edited: to
+change a price, edit `plans.json` and a migration, then run `--create` again
+(it makes a new Price and moves the lookup key) and the sync. Admins can
+still adjust plans in `/admin/subscriptions`; the next sync puts
+`plans.json`'s values back.
 
 ## Tests
 
@@ -147,5 +169,6 @@ Unit tests cover the parsers and status logic
 - **Stripe sync.** Subscriptions, Connect accounts, payments and webhook
   events are read from the database. The Stripe webhook handler that keeps
   them in sync is part of Step 4. Saving a plan does not call Stripe.
-- **The public pricing page** (`src/config/pricing.ts`) still has its own copy
-  of the plans; it could read `SubscriptionPlan` instead.
+- **Subscription checkout:** the pricing page's buttons lead to sign-up;
+  charging the monthly plan (Stripe Billing Checkout and the
+  `customer.subscription.*` webhooks) isn't built yet.

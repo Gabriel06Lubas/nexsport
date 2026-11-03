@@ -1,24 +1,55 @@
-import { Check } from "lucide-react";
 import type { Metadata } from "next";
 
 import { CtaBand } from "@/components/marketing/cta-band";
 import { FeeSplitCalculator } from "@/components/marketing/demos/fee-split-calculator";
 import { RefundCalculator } from "@/components/marketing/demos/refund-calculator";
+import { PricingTabs } from "@/components/marketing/pricing-tabs";
 import { PageHero, Section, SectionHeading } from "@/components/marketing/section";
-import { Badge } from "@/components/ui/badge";
-import { ButtonLink } from "@/components/ui/button";
-import { tiers } from "@/config/pricing";
-import { cn } from "@/lib/utils";
+import { planCurrency, planFacts, pricingCards, segments } from "@/config/pricing";
+import { siteConfig } from "@/config/site";
+
+const planPrice = (minor: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: planCurrency.toUpperCase(), minimumFractionDigits: 0 }).format(minor / 100);
+const priceOf = (tier: string) => planPrice(planFacts.find((p) => p.tier === tier)!.monthlyPriceAmount);
 
 export const metadata: Metadata = {
   title: "Pricing",
-  description: "Free for coaches. Monthly plans for clubs lower the platform fee on every session booking.",
+  description: `Free for coaches and athletes. Pro Coach ${priceOf("PRO_COACH")}/mo, Club Basic ${priceOf("CLUB_BASIC")}/mo, Club Enterprise ${priceOf("CLUB_ENTERPRISE")}/mo. Lower platform fees on higher plans.`,
+  alternates: { canonical: "/pricing" },
+  openGraph: {
+    title: "nexport pricing",
+    description: `Free Coach, Pro Coach (${priceOf("PRO_COACH")}/mo), Club Basic (${priceOf("CLUB_BASIC")}/mo) and Club Enterprise (${priceOf("CLUB_ENTERPRISE")}/mo). Always free for athletes.`,
+    url: "/pricing",
+  },
 };
+
+/** schema.org offers for search engines: one Offer per plan, monthly. */
+function structuredData() {
+  const data = {
+    "@context": "https://schema.org",
+    "@type": "Product",
+    name: "nexport",
+    description: siteConfig.description,
+    brand: { "@type": "Brand", name: "nexport" },
+    offers: pricingCards.map((c) => ({
+      "@type": "Offer",
+      name: c.id === "ATHLETE_FREE" ? "Athlete (Free)" : c.name,
+      price: (c.monthlyPriceAmount / 100).toFixed(2),
+      priceCurrency: planCurrency.toUpperCase(),
+      priceSpecification: { "@type": "UnitPriceSpecification", price: (c.monthlyPriceAmount / 100).toFixed(2), priceCurrency: planCurrency.toUpperCase(), unitCode: "MON" },
+      url: `${siteConfig.url}/pricing#${c.segment}`,
+      description: c.features.join("; "),
+    })),
+  };
+  // JSON in a <script>: escape "<" so no string can close the tag.
+  return JSON.stringify(data).replace(/</g, "\\u003c");
+}
+
+const feeLine = planFacts.map((p) => `${p.name} ${p.platformFeeBps / 100}%`).join(", ");
 
 const faqs = [
   {
     q: "What is the platform fee?",
-    a: "A percentage of each paid session booking. It's lower on higher plans. Free sessions carry no fee.",
+    a: `A percentage of each paid booking, taken when the payment is made: ${feeLine}. Free sessions carry no fee, and athletes never pay a subscription.`,
   },
   {
     q: "Who pays card processing fees?",
@@ -41,51 +72,18 @@ const faqs = [
 export default function PricingPage() {
   return (
     <>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: structuredData() }} />
       <PageHero
         eyebrow="Pricing"
         title="Start free. Pay less as you grow."
-        description="Every plan includes scheduling, payments, messaging and the social network. Higher plans add club tools and lower the fee on each booking."
+        description="Free for athletes and new coaches. Paid plans unlock club tools, online booking and lower fees on every payment."
       />
 
       <Section className="pt-12 sm:pt-16">
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          {tiers.map((t) => (
-            <div
-              key={t.id}
-              className={cn("flex flex-col rounded-2xl border bg-card p-6", t.featured ? "border-ink ring-1 ring-ink" : "border-border")}
-            >
-              <div className="flex items-center justify-between">
-                <h2 className="text-lg font-semibold">{t.name}</h2>
-                {t.featured && <Badge variant="lime">Most popular</Badge>}
-              </div>
-              <p className="mt-1 text-sm text-muted-foreground">{t.audience}</p>
-              <p className="mt-6">
-                {t.monthly === null ? (
-                  <span className="text-4xl font-semibold">Custom</span>
-                ) : (
-                  <>
-                    <span className="text-4xl font-semibold tabular-nums">€{t.monthly}</span>
-                    <span className="text-sm text-muted-foreground"> / month</span>
-                  </>
-                )}
-              </p>
-              <p className="mt-1 text-sm">
-                {t.platformFeeBps === null ? "Custom platform fee" : `${t.platformFeeBps / 100}% platform fee per paid booking`}
-              </p>
-              <ul className="mt-6 flex-1 space-y-2.5">
-                {t.highlights.map((h) => (
-                  <li key={h} className="flex gap-2 text-sm">
-                    <Check className="mt-0.5 size-4 shrink-0 text-accent-text" aria-hidden /> {h}
-                  </li>
-                ))}
-              </ul>
-              <ButtonLink href={t.monthly === null ? "/contact" : "/login"} variant={t.featured ? "primary" : "outline"} className="mt-8">
-                {t.cta}
-              </ButtonLink>
-            </div>
-          ))}
-        </div>
-        <p className="mt-6 text-center text-sm text-muted-foreground">Prices exclude VAT. Card processing is charged by Stripe at its standard rates.</p>
+        <PricingTabs segments={segments} cards={pricingCards} currency={planCurrency} />
+        <p className="mt-8 text-center text-sm text-muted-foreground">
+          Prices in {planCurrency.toUpperCase()}, billed monthly, excluding taxes. Card processing is charged by Stripe at its standard rates.
+        </p>
       </Section>
 
       <Section id="calculator" className="border-y border-border bg-muted/40">
