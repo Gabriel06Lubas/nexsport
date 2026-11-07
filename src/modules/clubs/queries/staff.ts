@@ -12,6 +12,7 @@ export type RosterMember = {
   userId: string;
   name: string | null;
   email: string;
+  phone: string | null;
   role: "OWNER" | "STAFF" | "COACH";
   status: "INVITED" | "ACTIVE" | "SUSPENDED";
   title: string | null;
@@ -28,11 +29,12 @@ export async function listRoster(clubId: string) {
   // permissions::text[]: node-postgres parses text[] into an array, but not an
   // array of a custom enum type.
   return rows<RosterMember>(sql`
-    SELECT cm.id, u.id AS "userId", u.name, u.email, cm.role, cm.status, cm.title, cm."employmentType",
+    SELECT cm.id, u.id AS "userId", u.name, u.email, pr.phone, cm.role, cm.status, cm.title, cm."employmentType",
            cm."hourlyWageAmount", cm."commissionBps", cm.permissions::text[] AS permissions, cm."joinedAt",
            sa.status AS "connectStatus", sa."payoutsEnabled"
       FROM "ClubMember" cm
       JOIN "User" u ON u.id = cm."userId"
+      LEFT JOIN "Profile" pr ON pr."userId" = u.id
       LEFT JOIN "StripeAccount" sa ON sa."userId" = u.id
      WHERE cm."clubId" = ${clubId} AND cm.role IN ('OWNER', 'STAFF', 'COACH') AND cm.status <> 'LEFT'
      ORDER BY CASE cm.role WHEN 'OWNER' THEN 0 WHEN 'STAFF' THEN 1 ELSE 2 END, lower(COALESCE(u.name, u.email))`);

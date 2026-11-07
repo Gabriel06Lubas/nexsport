@@ -9,7 +9,7 @@ server.
 
 | Step | Route | What happens |
 | --- | --- | --- |
-| 1. Role | `/onboarding` | Display name, `@handle`, and Athlete, Coach or Club owner (`chooseRole`). Athlete → `STUDENT`, onboarded, `/dashboard/student`. Coach → `COACH`, onboarded (Free Coach), `/onboarding/plan`. Club owner → **nothing granted**: the account stays a not-onboarded `STUDENT` and goes to `/onboarding/plan?for=club`. |
+| 1. Role and personal details | `/onboarding` | Athlete, Coach or Club owner, plus first name, last name, username (`@handle`) and phone number (`chooseRole`; see [Personal details](#personal-details)). Athlete → `STUDENT`, onboarded, `/dashboard/student`. Coach → `COACH`, onboarded (Free Coach), `/onboarding/plan`. Club owner → **nothing granted**: the account stays a not-onboarded `STUDENT` and goes to `/onboarding/plan?for=club`. |
 | 2. Plan | `/onboarding/plan` | Coach: "Continue with Free Coach" (no payment) or "Upgrade to Pro Coach" ($29/mo, Stripe Checkout). Club owner: Club Basic ($99/mo) or Club Enterprise ($299/mo), plus the club's name, address, city, country, time zone and currency, then Stripe Checkout. There is no free club option. |
 | 3. Payment | Stripe Checkout → `/onboarding/complete` | The page waits ("Confirming your payment…") until the webhook has provisioned the purchase, then opens the new club's dashboard or `/dashboard/coach?upgraded=1`. A cancelled Checkout returns to step 2 with nothing created. |
 
@@ -56,6 +56,32 @@ the Stripe billing portal ("Manage billing").
 - **The role takes effect on the next request.** Sessions are database
   sessions: the session callback reads the role from `User` on each
   request, so there is no JWT to refresh or forge.
+
+## Personal details
+
+Step 1 asks every athlete, coach and club owner for:
+
+| Field | Rules | Stored as |
+| --- | --- | --- |
+| First name, last name | 1–50 characters each, at least one letter, the plain-text rules (no control, bidi or invisible characters). Pre-filled from the Google/Apple name. | `Profile.firstName`, `Profile.lastName`. `"First Last"` also becomes `Profile.displayName` and `User.name`, which rosters, receipts and emails use. |
+| Username | `@handle`: 3–30 lowercase letters, numbers, dots and underscores; unique (*"That username is taken"*). | `Profile.handle` |
+| Phone number | A country picker (pre-selected from the browser's language region) plus the number, or an international `+…` number. It is checked against that country's numbering plan with `libphonenumber-js` (`max` metadata), so "12345" or "000 000 000" are refused. | `Profile.phone` in E.164 (`+34612345678`), enforced by the `Profile_phone_e164` constraint |
+
+The rules live in `src/modules/profile/lib/personal.ts` (unit tested), and
+`savePersonalDetails` writes them for both onboarding and **Settings →
+Personal details** (`/dashboard/settings/profile`, in the account menu and
+the athlete's Settings). There, anyone can change these details later. The
+sign-in email is shown but can't be changed.
+
+The phone number is private: it never appears on public pages (the coach
+booking page or profiles). It is shown as a `tel:` link only to people who
+work with that person:
+- a coach's **Students** list;
+- the club's **Staff** roster;
+- the club's **Memberships** pass holders.
+
+Accounts created before these fields existed have empty values. Settings
+asks them to fill them in.
 
 ## Entitlements (`src/lib/entitlements.ts`)
 

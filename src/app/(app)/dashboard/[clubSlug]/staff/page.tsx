@@ -13,6 +13,7 @@ import { monthSchema } from "@/modules/clubs/lib/forms";
 import { allClubPermissions, permissionLabels } from "@/modules/clubs/lib/permissions";
 import { addDays } from "@/modules/clubs/lib/zoned-time";
 import { currentMonth, getPayroll, listRoster, payrollLookup, previousMonth, wagesDue, type RosterMember } from "@/modules/clubs/queries/staff";
+import { PhoneLink } from "@/modules/profile/components/phone-link";
 
 export const metadata: Metadata = { title: "Staff & Payroll" };
 
@@ -99,6 +100,7 @@ export default async function StaffPage({ params, searchParams }: { params: Prom
                       <td className={td}>
                         <p className="font-medium">{m.name ?? m.email}</p>
                         <p className="text-xs text-muted-foreground">{m.email}</p>
+                        <PhoneLink phone={m.phone} />
                       </td>
                       <td className={td}>
                         <Badge variant={m.role === "OWNER" ? "lime" : m.role === "STAFF" ? "neutral" : "outline"}>{m.role === "OWNER" ? "Owner" : m.role === "STAFF" ? "Staff" : "Coach"}</Badge>

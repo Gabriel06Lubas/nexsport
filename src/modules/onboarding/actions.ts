@@ -12,17 +12,18 @@ import { club, planCheckout, profile, subscriptionPlan, user as userTable } from
 import type { SubscriptionTier } from "@/db/schema/enums";
 import { formValues, invalid, type ActionState } from "@/lib/action-state";
 import { getClubEntitlements, getCoachEntitlements } from "@/lib/entitlements";
-import { plainText } from "@/lib/validation";
 import { assertNotImpersonating, requireOnboardedUser, requireUser, type CurrentUser } from "@/modules/auth/dal";
 import { homePathFor } from "@/modules/auth/lib/roles";
 import { requireClubAccess } from "@/modules/clubs/dal";
 import { createClubSchema } from "@/modules/clubs/lib/forms";
 import { createPortalSession, ensureCustomer, getStripe, isMissingCustomer } from "@/modules/payments/stripe";
 import { createPlanCheckout } from "@/modules/payments/subscriptions";
+import { personalDetailsSchema } from "@/modules/profile/lib/personal";
+import { handleTaken, savePersonalDetails } from "@/modules/profile/save";
 
 // Onboarding and plan purchases.
 //
-//   Step 1  chooseRole: profile + role. Athletes and coaches are onboarded at
+//   Step 1  chooseRole: personal details (name, username, phone) + role. Athletes and coaches are onboarded at
 //           once (coaches on Free Coach). Choosing "club owner" changes
 //           nothing about the account: the user stays an un-onboarded STUDENT
 //           and goes on to step 2.
@@ -37,17 +38,7 @@ import { createPlanCheckout } from "@/modules/payments/subscriptions";
 // every request, so the webhook's role change applies on the next page load,
 // with no token to refresh, and nothing on the client can claim a role.
 
-const handleSchema = z
-  .string()
-  .trim()
-  .toLowerCase()
-  .regex(/^[a-z0-9_.]{3,30}$/, "3–30 characters: letters, numbers, dots and underscores");
-
-const roleSchema = z.object({
-  role: z.enum(["STUDENT", "COACH", "CLUB_OWNER"], { error: "Choose how you'll use nexport" }),
-  displayName: plainText({ min: 2, max: 60, label: "display name" }),
-  handle: handleSchema,
-});
+const roleSchema = z.enum(["STUDENT", "COACH", "CLUB_OWNER"], { error: "Choose how you'll use nexport" });
 
 export type OnboardingState = ActionState;
 
@@ -56,28 +47,28 @@ export async function chooseRole(_prev: OnboardingState, formData: FormData): Pr
   await assertNotImpersonating();
   if (current.role === "ADMIN" || current.onboarded) redirect(homePathFor(current.role));
   const values = formValues(formData);
-  const parsed = roleSchema.safeParse(values);
-  if (!parsed.success) return invalid(parsed.error, values);
-  const { role, displayName, handle } = parsed.data;
-
-  try {
-    await db.transaction(async (tx) => {
-      const [existing] = await tx.select({ id: profile.id }).from(profile).where(eq(profile.userId, current.id));
-      if (existing) await tx.update(profile).set({ handle, displayName }).where(eq(profile.id, existing.id));
-      else await tx.insert(profile).values({ userId: current.id, handle, displayName });
-      if (role === "CLUB_OWNER") return; // nothing granted until Stripe confirms payment
-      // `onboardedAt IS NULL` makes this one-shot: it can't be used later to switch roles.
-      await tx
-        .update(userTable)
-        .set({ role, onboardedAt: new Date() })
-        .where(and(eq(userTable.id, current.id), isNull(userTable.onboardedAt), ne(userTable.role, "ADMIN")));
-    });
-  } catch (e) {
-    if (isUniqueViolation(e, "Profile_handle_key")) return { error: "Check the highlighted fields.", fieldErrors: { handle: "That handle is taken" }, values };
-    throw e;
+  const role = roleSchema.safeParse(values.role);
+  const details = personalDetailsSchema.safeParse(values);
+  if (!role.success || !details.success) {
+    // Report every problem at once, the role's included.
+    const fieldErrors = { ...(details.success ? {} : (invalid(details.error, values).fieldErrors ?? {})), ...(role.success ? {} : { role: role.error.issues[0]!.message }) };
+    return { error: "Check the highlighted fields.", fieldErrors, values };
   }
-  if (role === "STUDENT") redirect("/dashboard/student");
-  if (role === "COACH") redirect("/onboarding/plan");
+
+  const saved = await db.transaction(async (tx) => {
+    if ((await savePersonalDetails(tx, current.id, details.data)) === "handle-taken") return "handle-taken" as const;
+    if (role.data === "CLUB_OWNER") return "ok" as const; // nothing granted until Stripe confirms payment
+    // `onboardedAt IS NULL` makes this one-shot: it can't be used later to switch roles.
+    await tx
+      .update(userTable)
+      .set({ role: role.data, onboardedAt: new Date() })
+      .where(and(eq(userTable.id, current.id), isNull(userTable.onboardedAt), ne(userTable.role, "ADMIN")));
+    return "ok" as const;
+  });
+  if (saved === "handle-taken") return { ...handleTaken, values };
+  const choice = role.data;
+  if (choice === "STUDENT") redirect("/dashboard/student");
+  if (choice === "COACH") redirect("/onboarding/plan");
   redirect("/onboarding/plan?for=club");
 }
 

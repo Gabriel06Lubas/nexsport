@@ -211,8 +211,18 @@ try {
   await confirmEmail(page, "maria@e2e.test");
   check(new URL(page.url()).pathname === "/onboarding", "the right code confirms the email and continues to onboarding");
   await shot(page, "2-onboarding");
+  check(
+    (await page.getByLabel("First name").inputValue()) === "María" && (await page.getByLabel("Last name").inputValue()) === "Coach",
+    "onboarding asks for first and last name, pre-filled from the Google profile",
+  );
   await page.getByText("Coach", { exact: true }).click();
-  await page.getByLabel("Profile handle").fill("maria.coach");
+  await page.getByLabel("Username").fill("maria.coach");
+  await page.getByRole("button", { name: "Continue" }).click();
+  check(await page.getByText("Enter your phone number").first().waitFor().then(() => true, () => false), "the phone number is required");
+  await page.getByLabel("Phone number").fill("12345");
+  await page.getByRole("button", { name: "Continue" }).click();
+  check(await page.getByText("That isn't a valid phone number").first().waitFor().then(() => true, () => false), "a number that doesn't exist for the country is refused");
+  await page.getByLabel("Phone number").fill("+34 612 34 56 78");
   await page.getByRole("button", { name: "Continue" }).click();
   await page.waitForURL((u) => u.pathname === "/onboarding/plan");
   check(
@@ -222,6 +232,20 @@ try {
   await page.getByRole("link", { name: "Continue with Free Coach" }).click();
   await page.waitForURL(`${APP}/dashboard/coach`);
   check(true, "Free Coach → /dashboard/coach");
+  const { rows: [details] } = await db.query(`SELECT p."firstName", p."lastName", p.phone, p.handle, u.name FROM "Profile" p JOIN "User" u ON u.id = p."userId" WHERE u.email = 'maria@e2e.test'`);
+  check(
+    details?.firstName === "María" && details.lastName === "Coach" && details.phone === "+34612345678" && details.handle === "maria.coach" && details.name === "María Coach",
+    "name, username and phone are stored (phone as E.164 +34612345678)",
+  );
+  await page.goto(`${APP}/dashboard/settings/profile`);
+  const details2 = page.getByRole("form", { name: "Personal details" });
+  check((await details2.getByLabel("Phone number").inputValue()) === "612 34 56 78" && (await details2.getByLabel("Phone country").inputValue()) === "ES", "Settings → Personal details shows the saved number");
+  await details2.getByLabel("Phone number").fill("622 11 22 33");
+  await details2.getByLabel("Last name").fill("Coach-López");
+  await details2.getByRole("button", { name: "Save" }).click();
+  await details2.getByText("Saved.").waitFor();
+  const { rows: [edited] } = await db.query(`SELECT p.phone, p."displayName", u.name FROM "Profile" p JOIN "User" u ON u.id = p."userId" WHERE u.email = 'maria@e2e.test'`);
+  check(edited?.phone === "+34622112233" && edited.displayName === "María Coach-López" && edited.name === "María Coach-López", "…and edits are saved (name and phone)");
   await shot(page, "3-coach-dashboard");
 
   const { rows: users } = await db.query(`SELECT id, email, role, "onboardedAt" FROM "User" WHERE email LIKE '%@e2e.test'`);
@@ -268,22 +292,28 @@ try {
   const secondPage = await signIn(second, "google");
   await confirmEmail(secondPage, "second@e2e.test");
   const sqlName = `Robert'); DROP TABLE "User";--`;
-  await secondPage.getByLabel("Display name").fill(sqlName);
-  await secondPage.getByLabel("Profile handle").fill("maria.coach");
+  await secondPage.getByLabel("Last name").fill(sqlName);
+  await secondPage.getByLabel("Username").fill("maria.coach");
+  await secondPage.getByLabel("Phone number").fill(`612'; DROP TABLE "Profile";--`);
   await secondPage.getByRole("button", { name: "Continue" }).click();
-  await secondPage.getByText("That handle is taken").waitFor();
-  check(new URL(secondPage.url()).pathname === "/onboarding", "taken handle → 'That handle is taken', stays on onboarding");
-  await secondPage.getByLabel("Profile handle").fill("second.user");
+  check(await secondPage.getByText("That isn't a valid phone number").first().waitFor().then(() => true, () => false), "SQL-ish text in the phone box is refused as an invalid number");
+  await secondPage.getByLabel("Phone country").selectOption("PT");
+  await secondPage.getByLabel("Phone number").fill("912 345 678");
+  await secondPage.getByRole("button", { name: "Continue" }).click();
+  await secondPage.getByText("That username is taken").waitFor();
+  check(new URL(secondPage.url()).pathname === "/onboarding", "taken username → 'That username is taken', stays on onboarding");
+  await secondPage.getByLabel("Username").fill("second.user");
   await secondPage.getByRole("button", { name: "Continue" }).click();
   await secondPage.waitForURL(`${APP}/dashboard/student`);
   check(true, "a free handle then completes onboarding (athlete by default)");
-  const { rows: stored } = await db.query(`SELECT "displayName" FROM "Profile" WHERE handle = 'second.user'`);
+  const { rows: stored } = await db.query(`SELECT "lastName", phone FROM "Profile" WHERE handle = 'second.user'`);
   // 5c. Choosing "Club owner" grants nothing until Stripe confirms a payment.
   as({ sub: "google-sub-4", email: "owner@e2e.test", name: "Would-be Owner" });
   const ownerPage = await signIn(await browser.newContext(), "google");
   await confirmEmail(ownerPage, "owner@e2e.test");
   await ownerPage.getByText("Club owner", { exact: true }).click();
-  await ownerPage.getByLabel("Profile handle").fill("would.be.owner");
+  await ownerPage.getByLabel("Username").fill("would.be.owner");
+  await ownerPage.getByLabel("Phone number").fill("+351 912 345 679");
   await ownerPage.getByRole("button", { name: "Continue" }).click();
   await ownerPage.waitForURL((u) => u.pathname === "/onboarding/plan" && u.searchParams.get("for") === "club");
   check(await ownerPage.getByRole("form", { name: "Club plan and details" }).isVisible(), "Club owner → step 2 asks for Club Basic or Club Enterprise and the club's details");
@@ -292,7 +322,10 @@ try {
   await ownerPage.goto(`${APP}/dashboard/club`);
   check(new URL(ownerPage.url()).pathname.startsWith("/onboarding"), "/dashboard/club stays closed until the plan is paid");
 
-  check(stored[0]?.displayName === sqlName && (await db.query(`SELECT to_regclass('public."User"') IS NOT NULL AS ok`)).rows[0].ok, "an SQL payload as display name is stored as plain text; nothing is executed");
+  check(
+    stored[0]?.lastName === sqlName && stored[0].phone === "+351912345678" && (await db.query(`SELECT to_regclass('public."User"') IS NOT NULL AS ok`)).rows[0].ok,
+    "an SQL payload as a name is stored as plain text, nothing is executed; the Portuguese number is stored as +351912345678",
+  );
 
   // 6. Devices page lists both sessions; revoking one kills it immediately.
   await page.goto(`${APP}/dashboard/settings/security`);

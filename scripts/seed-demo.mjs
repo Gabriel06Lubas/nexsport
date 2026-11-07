@@ -59,13 +59,22 @@ try {
   const sportId = (await q(`SELECT id FROM "Sport" WHERE slug = 'padel'`)).rows[0].id;
 
   // ---- People ---------------------------------------------------------------
+  let phoneSeq = 0;
   const user = async (id, email, name, role, handle, createdAt) => {
     await q(
       `INSERT INTO "User"(id, email, name, role, "emailVerified", "onboardedAt", "createdAt", "updatedAt")
        VALUES ($1, $2, $3, $4, $5, $5, $5, $5)`,
       [id, email, name, role, createdAt],
     );
-    if (handle) await q(`INSERT INTO "Profile"(id, "userId", handle, "displayName", "updatedAt") VALUES ($1, $2, $3, $4, now())`, [`${id}p`, id, handle, name]);
+    if (handle) {
+      // Personal details as onboarding collects them; +34 612 00x xxx are valid Spanish mobiles.
+      const [firstName, ...rest] = name.split(" ");
+      const phone = `+34612${String(++phoneSeq).padStart(6, "0")}`;
+      await q(
+        `INSERT INTO "Profile"(id, "userId", handle, "displayName", "firstName", "lastName", phone, "updatedAt") VALUES ($1, $2, $3, $4, $5, $6, $7, now())`,
+        [`${id}p`, id, handle, name, firstName, rest.join(" ") || firstName, phone],
+      );
+    }
   };
 
   const clubs = [

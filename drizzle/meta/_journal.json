@@ -92,6 +92,13 @@
       "when": 1793701433204,
       "tag": "0012_plan_checkout",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1794091923379,
+      "tag": "0013_profile_personal_details",
+      "breakpoints": true
     }
   ]
 }

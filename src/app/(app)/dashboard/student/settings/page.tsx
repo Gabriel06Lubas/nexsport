@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { CreditCard, ShieldCheck } from "lucide-react";
+import { CreditCard, ShieldCheck, UserRound } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 
@@ -151,7 +151,10 @@ export default async function StudentSettingsPage({ searchParams }: { searchPara
         </ActionForm>
       </Panel>
 
-      <p className="text-sm">
+      <p className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
+        <Link href="/dashboard/settings/profile" className="inline-flex items-center gap-2 font-medium hover:underline">
+          <UserRound className="size-4" aria-hidden /> Name, username and phone
+        </Link>
         <Link href="/dashboard/settings/security" className="inline-flex items-center gap-2 font-medium hover:underline">
           <ShieldCheck className="size-4" aria-hidden /> Devices and sign-in methods
         </Link>

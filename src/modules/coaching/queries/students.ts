@@ -20,6 +20,7 @@ export type StudentRow = {
   userId: string;
   name: string | null;
   email: string;
+  phone: string | null;
   clubs: string;
   sessions: number;
   marked: number;
@@ -39,7 +40,7 @@ export async function listStudents(coachId: string, q: string) {
         LEFT JOIN "Attendance" a ON a."participantId" = p.id
        WHERE s."coachId" = ${coachId} AND s.status <> 'CANCELLED'
     )
-    SELECT u.id AS "userId", u.name, u.email,
+    SELECT u.id AS "userId", u.name, u.email, (SELECT pr.phone FROM "Profile" pr WHERE pr."userId" = u.id) AS phone,
            (SELECT string_agg(DISTINCT c.name, ', ') FROM ids JOIN "Club" c ON c.id = ids."clubId" WHERE ids."userId" = u.id) AS clubs,
            (SELECT count(*)::int FROM mine WHERE mine."userId" = u.id AND mine."startsAt" <= now()) AS sessions,
            (SELECT count(*)::int FROM mine WHERE mine."userId" = u.id AND mine.attendance IS NOT NULL) AS marked,

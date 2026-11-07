@@ -1,4 +1,4 @@
-import { LogOut, ShieldCheck } from "lucide-react";
+import { LogOut, ShieldCheck, UserRound } from "lucide-react";
 import Link from "next/link";
 
 import { signOutAction } from "../actions";
@@ -40,6 +40,11 @@ export function UserMenu({ user }: { user: CurrentUser }) {
           <p className="truncate text-xs text-muted-foreground">{user.email}</p>
           {user.onboarded && <p className="mt-1 text-xs text-accent-text">{roleLabels[user.role]}</p>}
         </div>
+        {user.onboarded && (
+          <Link href="/dashboard/settings/profile" className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-muted">
+            <UserRound className="size-4" aria-hidden /> Personal details
+          </Link>
+        )}
         <Link href="/dashboard/settings/security" className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-muted">
           <ShieldCheck className="size-4" aria-hidden /> Security & devices
         </Link>

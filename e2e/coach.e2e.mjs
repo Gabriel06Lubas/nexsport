@@ -221,7 +221,8 @@ try {
   // 5. Attendance and credits ------------------------------------------------------------
   await coach.goto(`${APP}${COACH}/students`);
   const participant = await one(`SELECT p.id, COALESCE(u.name, u.email) AS name FROM "SessionParticipant" p JOIN "User" u ON u.id = p."userId" WHERE p."sessionId" = $1`, [wrapId]);
-  const sheetRow = coach.getByRole("list", { name: /^Attendance for/ }).getByRole("listitem").filter({ hasText: participant.name }).first();
+  // By participant: the same student can be in several sessions on the sheet (which ones depends on the weekday).
+  const sheetRow = coach.locator(`[data-participant-id="${participant.id}"]`);
   await sheetRow.getByRole("button", { name: "Late" }).click();
   check(await said(sheetRow, "Marked late."), "a student is checked in as late");
   check((await one(`SELECT status, "markedById" FROM "Attendance" WHERE "participantId" = $1`, [participant.id])).status === "LATE", "…saved with who marked it");

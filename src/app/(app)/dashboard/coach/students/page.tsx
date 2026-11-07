@@ -7,6 +7,7 @@ import { parseListParams } from "@/lib/list-params";
 import { adjustCredit, markAttendance } from "@/modules/coaching/actions/students";
 import { getCoachProfile, requireCoach } from "@/modules/coaching/dal";
 import { getAttendanceSheet, getRecentAdjustments, getStudentPasses, listStudents, type AttendanceSession } from "@/modules/coaching/queries/students";
+import { PhoneLink } from "@/modules/profile/components/phone-link";
 
 export const metadata: Metadata = { title: "Students & Credits" };
 
@@ -56,7 +57,7 @@ export default async function StudentsPage({ searchParams }: { searchParams: Sea
                 </p>
                 <ul className="mt-2 space-y-2" aria-label={`Attendance for ${s.title}`}>
                   {s.rows.map((r) => (
-                    <li key={r.participantId} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border px-3 py-2">
+                    <li key={r.participantId} data-participant-id={r.participantId} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border px-3 py-2">
                       <span className="min-w-0 text-sm">
                         {r.studentName ?? r.studentEmail}{" "}
                         {r.attendance ? <Badge variant={attendanceBadge[r.attendance]}>{r.attendance.charAt(0) + r.attendance.slice(1).toLowerCase()}</Badge> : <Badge variant="outline">Not marked</Badge>}
@@ -194,6 +195,7 @@ export default async function StudentsPage({ searchParams }: { searchParams: Sea
                       <td className={td}>
                         <p className="font-medium">{s.name ?? s.email}</p>
                         <p className="text-xs text-muted-foreground">{s.email}</p>
+                        <PhoneLink phone={s.phone} />
                       </td>
                       <td className={`${td} text-xs`}>{s.clubs ?? "—"}</td>
                       <td className={`${td} tabular-nums`}>{s.sessions}</td>

@@ -38,6 +38,7 @@ export type PassRow = {
   planName: string;
   holderName: string | null;
   holderEmail: string;
+  holderPhone: string | null;
   creditsTotal: number | null;
   creditsUsed: number;
   startsAt: Date;
@@ -68,7 +69,7 @@ export async function listPasses(clubId: string, { filter, q, page }: { filter: 
   );
   const [passes, [{ total = 0 } = {}]] = await Promise.all([
     rows<PassRow>(sql`
-      SELECT mp.id, p.name AS "planName", u.name AS "holderName", u.email AS "holderEmail", mp."creditsTotal", mp."creditsUsed",
+      SELECT mp.id, p.name AS "planName", u.name AS "holderName", u.email AS "holderEmail", (SELECT pr.phone FROM "Profile" pr WHERE pr."userId" = u.id) AS "holderPhone", mp."creditsTotal", mp."creditsUsed",
              mp."startsAt", mp."expiresAt", mp."cancelledAt", mp."priceAmount", mp.currency, mp."paymentMethod"
         FROM "MemberPass" mp JOIN "MembershipPlan" p ON p.id = mp."planId" JOIN "User" u ON u.id = mp."userId"
        WHERE ${where}

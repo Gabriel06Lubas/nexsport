@@ -25,7 +25,7 @@ enforced in a **Data Access Layer** next to the data.
 | `src/proxy.ts` | Optimistic redirect to `/login` when there's no session cookie (Next 16's replacement for `middleware.ts`) |
 | `src/app/(auth)/login` | Sign-in page (Google, Apple, email) and `login/verify` (enter the code) |
 | `src/app/(app)/verify-email` | "Confirm your email" step after a Google/Apple sign-up |
-| `src/app/(app)/onboarding` | Role + profile handle, then the plan (see [onboarding.md](onboarding.md)) |
+| `src/app/(app)/onboarding` | Role, name, username and phone, then the plan (see [onboarding.md](onboarding.md)) |
 | `src/app/(app)/dashboard/*` | Role areas (`club`, `coach`, `athlete`) and `settings/security` |
 | `src/db/schema/auth.ts` | `User`, `Account`, `Session`, `EmailCode`, `Profile` tables |
 | `e2e/auth.e2e.mjs` | Browser end-to-end test against a mock OpenID provider |
@@ -39,7 +39,7 @@ enforced in a **Data Access Layer** next to the data.
         │                                                                     │
         └─► Continue with email ──► code emailed ──► /login/verify ───────────┤
                                                                               ▼
-              not onboarded? ──► /onboarding (role, @handle) ──► /onboarding/plan ──► role dashboard
+              not onboarded? ──► /onboarding (role, name, @username, phone) ──► /onboarding/plan ──► role dashboard
               returning ──► callbackUrl (validated) or /dashboard ──► role dashboard
 ```
 

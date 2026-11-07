@@ -235,8 +235,10 @@ const waitFor = async (fn) => {
 try {
   // 1. Step 1: "Club owner" grants nothing --------------------------------------
   const owner = await signUp(OWNER);
-  await owner.getByLabel("Display name").fill("Olivia Owner");
-  await owner.getByLabel("Profile handle").fill("olivia.owner");
+  await owner.getByLabel("First name").fill("Olivia");
+  await owner.getByLabel("Last name").fill("Owner");
+  await owner.getByLabel("Username").fill("olivia.owner");
+  await owner.getByLabel("Phone number").fill("+34 612 98 76 54");
   await owner.getByText("Club owner", { exact: true }).click();
   await owner.getByRole("button", { name: "Continue" }).click();
   await owner.waitForURL((u) => u.pathname === "/onboarding/plan");
@@ -379,8 +381,10 @@ try {
 
   // 10. Free Coach: 15 active students; Pro Coach: unlimited -----------------------
   const coachPage = await signUp(COACH);
-  await coachPage.getByLabel("Display name").fill("Carla Coach");
-  await coachPage.getByLabel("Profile handle").fill("carla.coach");
+  await coachPage.getByLabel("First name").fill("Carla");
+  await coachPage.getByLabel("Last name").fill("Coach");
+  await coachPage.getByLabel("Username").fill("carla.coach");
+  await coachPage.getByLabel("Phone number").fill("+34 612 98 76 55");
   await coachPage.getByText("Coach", { exact: true }).click();
   await coachPage.getByRole("button", { name: "Continue" }).click();
   await coachPage.waitForURL((u) => u.pathname === "/onboarding/plan");

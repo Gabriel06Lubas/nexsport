@@ -11,6 +11,7 @@ import { cancelPass, redeemCredit, savePlan, sellPass, setPlanActive } from "@/m
 import { requireClubSection, type ClubAccess } from "@/modules/clubs/dal";
 import { zonedParts } from "@/modules/clubs/lib/zoned-time";
 import { listPasses, listPlans, PASS_FILTERS, type PassFilter, type PassRow } from "@/modules/clubs/queries/memberships";
+import { PhoneLink } from "@/modules/profile/components/phone-link";
 
 export const metadata: Metadata = { title: "Memberships & Passes" };
 
@@ -143,6 +144,7 @@ export default async function MembershipsPage({ params, searchParams }: { params
                         <td className={td}>
                           <p className="font-medium">{p.holderName ?? p.holderEmail}</p>
                           <p className="text-xs text-muted-foreground">{p.holderEmail}</p>
+                          <PhoneLink phone={p.holderPhone} />
                         </td>
                         <td className={td}>{p.planName}</td>
                         <td className={`${td} tabular-nums`}>

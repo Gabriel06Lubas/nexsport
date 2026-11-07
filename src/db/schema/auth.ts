@@ -145,7 +145,13 @@ export const profile = pgTable(
     userId: text().notNull(),
     /** Lower-cased @handle, unique platform-wide. */
     handle: text().notNull(),
+    /** Public name, "First Last" unless changed. */
     displayName: text().notNull(),
+    /** Personal details from onboarding. Private: never shown on public pages. */
+    firstName: text(),
+    lastName: text(),
+    /** E.164 (+34612345678), validated per country by libphonenumber-js. */
+    phone: text(),
     bio: varchar({ length: 500 }),
     avatarUrl: text(),
     coverUrl: text(),
@@ -166,6 +172,8 @@ export const profile = pgTable(
     uniq("Profile", t.handle),
     fk("Profile", [t.userId], [user.id]).onDelete("cascade"),
     check("Profile_handle_format", sql`"handle" ~ '^[a-z0-9_.]{3,30}$'`),
+    check("Profile_phone_e164", sql`"phone" IS NULL OR "phone" ~ '^[+][1-9][0-9]{6,14}$'`),
+    check("Profile_name_length", sql`(char_length("firstName") BETWEEN 1 AND 50) AND (char_length("lastName") BETWEEN 1 AND 50)`),
     check("Profile_counters_non_negative", sql`"followerCount" >= 0 AND "followingCount" >= 0 AND "postCount" >= 0`),
   ],
 );
