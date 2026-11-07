@@ -8,7 +8,7 @@ import { redirect } from "next/navigation";
 import { db } from "@/db";
 import { athletePreferredClub, athleteSettings, club, profile, profileSport, sport } from "@/db/schema";
 import { formValues, invalid, type ActionState } from "@/lib/action-state";
-import { createPortalSession, ensureCustomer, getStripe } from "@/modules/payments/stripe";
+import { createPortalSession, ensureCustomer, forgetCustomer, getStripe, isMissingCustomer } from "@/modules/payments/stripe";
 
 import { requireStudent } from "../dal";
 import { levelSchema, preferencesSchema } from "../lib/forms";
@@ -76,7 +76,14 @@ export async function openBillingPortal(_prev: ActionState, _formData: FormData)
   let url: string;
   try {
     const customerId = await ensureCustomer(stripe, student);
-    url = await createPortalSession(stripe, customerId, "/dashboard/student/settings");
+    try {
+      url = await createPortalSession(stripe, customerId, "/dashboard/student/settings");
+    } catch (error) {
+      if (!isMissingCustomer(error)) throw error;
+      // An athlete's customer only holds saved cards: forget the stale id and start a fresh one.
+      await forgetCustomer(student.id, customerId);
+      url = await createPortalSession(stripe, await ensureCustomer(stripe, student), "/dashboard/student/settings");
+    }
   } catch (error) {
     console.error("[stripe] portal failed", error);
     return { error: "Stripe is unavailable right now. Try again in a moment." };

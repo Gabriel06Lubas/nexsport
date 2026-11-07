@@ -9,7 +9,7 @@ import { db } from "@/db";
 import { user } from "@/db/schema";
 import { parseListParams } from "@/lib/list-params";
 import { formatMoney } from "@/lib/utils";
-import { getStripe, listCards } from "@/modules/payments/stripe";
+import { getStripe, isMissingCustomer, listCards } from "@/modules/payments/stripe";
 import { openBillingPortal, saveLevels, savePreferences } from "@/modules/student/actions/settings";
 import { requireStudent } from "@/modules/student/dal";
 import { listMyPayments } from "@/modules/student/queries/bookings";
@@ -27,6 +27,8 @@ async function savedCards(userId: string) {
   try {
     return { enabled: true as const, cards: await listCards(stripe, row.customerId) };
   } catch (error) {
+    // Not in this Stripe account: no saved cards (the portal replaces the stale id).
+    if (isMissingCustomer(error)) return { enabled: true as const, cards: [] };
     console.error("[stripe] listing cards failed", error);
     return { enabled: true as const, cards: null };
   }

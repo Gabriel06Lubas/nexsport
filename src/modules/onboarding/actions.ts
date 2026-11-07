@@ -17,7 +17,7 @@ import { assertNotImpersonating, requireOnboardedUser, requireUser, type Current
 import { homePathFor } from "@/modules/auth/lib/roles";
 import { requireClubAccess } from "@/modules/clubs/dal";
 import { createClubSchema } from "@/modules/clubs/lib/forms";
-import { createPortalSession, ensureCustomer, getStripe } from "@/modules/payments/stripe";
+import { createPortalSession, ensureCustomer, getStripe, isMissingCustomer } from "@/modules/payments/stripe";
 import { createPlanCheckout } from "@/modules/payments/subscriptions";
 
 // Onboarding and plan purchases.
@@ -227,6 +227,10 @@ export async function openClubBillingPortal(_prev: ActionState, formData: FormDa
   try {
     url = await createPortalSession(stripe, ent.stripeCustomerId, `/dashboard/${access.club.slug}/billing`);
   } catch (error) {
+    if (isMissingCustomer(error)) {
+      console.error(`[stripe] club portal: customer ${ent.stripeCustomerId} of club ${access.club.id} doesn't exist in this Stripe account (another account or mode, or seeded demo data)`);
+      return { error: "Stripe has no record of this club's billing account, so the billing portal can't open. Contact nexport support to reconnect it." };
+    }
     console.error("[stripe] club portal failed", error);
     return { error: "Stripe is unavailable right now. Try again in a moment." };
   }
@@ -244,6 +248,10 @@ export async function openCoachBillingPortal(_prev: ActionState, _formData: Form
   try {
     url = await createPortalSession(stripe, row.customerId, "/dashboard/coach/earnings");
   } catch (error) {
+    if (isMissingCustomer(error)) {
+      console.error(`[stripe] coach portal: customer ${row.customerId} of user ${coach.id} doesn't exist in this Stripe account`);
+      return { error: "Stripe has no record of your billing account, so the billing portal can't open. Contact nexport support to reconnect it." };
+    }
     console.error("[stripe] coach portal failed", error);
     return { error: "Stripe is unavailable right now. Try again in a moment." };
   }

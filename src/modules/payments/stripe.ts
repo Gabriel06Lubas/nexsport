@@ -154,6 +154,22 @@ export async function listCards(stripe: Stripe, customerId: string) {
   return list.data.map((pm) => ({ id: pm.id, brand: pm.card?.brand ?? "card", last4: pm.card?.last4 ?? "····", expMonth: pm.card?.exp_month, expYear: pm.card?.exp_year }));
 }
 
+/**
+ * Stripe answered "No such customer": the stored cus_… id doesn't exist in
+ * the account (and mode) the secret key belongs to. Typical causes: the key
+ * was switched to another account or from test to live, or the row came
+ * from the demo seed, whose Stripe ids are made up.
+ */
+export function isMissingCustomer(error: unknown): boolean {
+  const e = error as { type?: string; code?: string; param?: string } | null;
+  return e?.type === "StripeInvalidRequestError" && e.code === "resource_missing" && e.param === "customer";
+}
+
+/** Drops a stored customer id Stripe doesn't know, so ensureCustomer() creates a new one. */
+export async function forgetCustomer(userId: string, customerId: string) {
+  await db.update(user).set({ stripeCustomerId: null }).where(and(eq(user.id, userId), eq(user.stripeCustomerId, customerId)));
+}
+
 export async function createPortalSession(stripe: Stripe, customerId: string, returnPath: string) {
   const portal = await stripe.billingPortal.sessions.create({ customer: customerId, return_url: appUrl(returnPath) });
   return portal.url;

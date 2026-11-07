@@ -145,6 +145,10 @@ const stripeServer = createServer(async (req, res) => {
   }
   const sub = url.pathname.match(/^\/v1\/subscriptions\/(sub_onb_\d+)$/);
   if (req.method === "GET" && sub && subscriptions.has(sub[1])) return json(200, subscriptions.get(sub[1]));
+  if (req.method === "POST" && url.pathname === "/v1/billing_portal/sessions" && !form.get("customer")?.startsWith("cus_onb_")) {
+    // Like Stripe for a customer that isn't in this account (e.g. seeded demo ids).
+    return json(400, { error: { type: "invalid_request_error", code: "resource_missing", param: "customer", message: `No such customer: '${form.get("customer")}'` } });
+  }
   if (req.method === "POST" && url.pathname === "/v1/billing_portal/sessions") return json(200, { id: "bps_onb", object: "billing_portal.session", url: `${STRIPE}/portal` });
   json(404, { error: { type: "invalid_request_error", message: `mock: no route ${req.method} ${url.pathname}` } });
 });
@@ -355,6 +359,13 @@ try {
   await owner.getByRole("button", { name: "Manage billing" }).click();
   await owner.waitForURL((u) => u.href === `${STRIPE}/portal`);
   check(true, "billing stays open and 'Manage billing' opens the Stripe portal");
+  // A customer id Stripe doesn't know (another account, or the demo seed's made-up ids).
+  const realCustomer = (await one(`SELECT "stripeCustomerId" AS id FROM "Subscription" WHERE "clubId" = $1`, [arena.id])).id;
+  await db.query(`UPDATE "Subscription" SET "stripeCustomerId" = 'cus_demo04' WHERE "clubId" = $1`, [arena.id]);
+  await owner.goto(`${APP}/dashboard/arena-e2e/billing`);
+  await owner.getByRole("button", { name: "Manage billing" }).click();
+  check(await said(owner, "Stripe has no record of this club's billing account"), "a customer missing from Stripe gets a clear message, not 'Stripe is unavailable'");
+  await db.query(`UPDATE "Subscription" SET "stripeCustomerId" = $2 WHERE "clubId" = $1`, [arena.id, realCustomer]);
   stripeSub.status = "active";
   await sendWebhook("customer.subscription.updated", stripeSub);
   await waitFor(async () => (await one(`SELECT status FROM "Subscription" WHERE "clubId" = $1`, [arena.id])).status === "ACTIVE");

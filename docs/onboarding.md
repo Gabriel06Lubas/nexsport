@@ -121,6 +121,19 @@ provisioned: the wrong Price, or a club that already has a live
 subscription. The `error` column says why. Refund or fix it in Stripe; the
 customer sees "We couldn't finish setting up" on `/onboarding/complete`.
 
+### Demo data and real Stripe keys
+
+The demo seed's subscriptions use made-up Stripe ids (`cus_demo04`,
+`sub_demo04`, …) so the dashboards have data. With real test-mode keys,
+Stripe doesn't know them: "Manage billing" on a seeded club (e.g.
+`owner04@demo.nexport.test`) shows *"Stripe has no record of this club's
+billing account"* instead of opening the portal. The same happens after
+switching `STRIPE_SECRET_KEY` to another account or from test to live. To
+try the portal for real, sign up a new club through Checkout (test card
+`4242 4242 4242 4242`), and its subscription and customer will exist in your
+account. An athlete's stale customer id is replaced automatically, because
+it only holds saved cards.
+
 ## Tests
 
 ```bash
@@ -128,7 +141,7 @@ DATABASE_URL=postgresql://… npm run test:e2e:onboarding
 ```
 
 The test runs against a local Stripe mock (Checkout in subscription mode,
-subscriptions, the portal, and signed webhooks) and checks 41 things:
+subscriptions, the portal, and signed webhooks) and checks 42 things:
 
 - Choosing Club owner grants nothing, and the club dashboard stays closed.
 - A forged plan value and a taken address are refused.
@@ -141,7 +154,8 @@ subscriptions, the portal, and signed webhooks) and checks 41 things:
 - Replays don't duplicate anything.
 - Club Basic's 5-court limit and its Enterprise upsells.
 - `PAST_DUE` locks the club, and the portal plus reactivation unlock it.
-- A cancelled club is offered a new plan.
+- A cancelled club is offered a new plan, and a customer missing from Stripe
+  gets a clear message.
 - Free Coach's 15-student cap allows a returning student and refuses a
   16th; Pro Coach lifts the cap after its own Checkout and webhook.
 
