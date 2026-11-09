@@ -18,6 +18,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node scripts/db-migrate.mjs",
     "db:seed": "node scripts/seed-demo.mjs",
+    "db:reset-keep-accounts": "node scripts/db-reset-keep-accounts.mjs",
     "db:check": "drizzle-kit check",
     "db:schema": "node scripts/db-schema.mjs",
     "stripe:plans": "node scripts/stripe-plans.mjs",

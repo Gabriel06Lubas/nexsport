@@ -46,6 +46,9 @@ npm run db:up          # terminal 1: local PostgreSQL on localhost:5432 (leave i
 npm run db:migrate     # terminal 2: create the tables
 npm run db:seed        # optional: demo clubs, coaches and payments (local only);
                        # sign in as owner01@ (club), coach01@ or athlete01@demo.nexport.test
+npm run db:reset-keep-accounts -- --yes
+                       # optional: delete everything except the accounts (users, sign-ins,
+                       # profiles), to test features from scratch; without --yes it's a dry run
 npm run db:studio      # optional: browse the data in Drizzle Studio
 npm run dev            # then open http://localhost:3000/login
 ```
