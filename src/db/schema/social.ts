@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import { boolean, check, index, integer, pgTable, primaryKey, text, varchar } from "drizzle-orm/pg-core";
 
-import { createdAt, fk, id, idx, tstz, uniq, updatedAt } from "../columns";
+import { createdAt, fk, fkIdx, id, idx, tstz, uniq, updatedAt } from "../columns";
 import { user } from "./auth";
 import { club } from "./clubs";
 import { conversationType, mediaType, postVisibility } from "./enums";
@@ -127,6 +127,7 @@ export const conversation = pgTable(
     index("Conversation_lastMessageAt_idx").on(t.lastMessageAt.desc().nullsFirst()),
     fk("Conversation", [t.clubId], [club.id]).onDelete("cascade"),
     fk("Conversation", [t.createdById], [user.id]).onDelete("restrict"),
+    fkIdx("Conversation", t.createdById),
     check("Conversation_direct_has_key", sql`"type" <> 'DIRECT' OR "directKey" IS NOT NULL`),
   ],
 );
@@ -166,5 +167,6 @@ export const message = pgTable(
     index("Message_conversationId_createdAt_idx").on(t.conversationId, t.createdAt.desc().nullsFirst()),
     fk("Message", [t.conversationId], [conversation.id]).onDelete("cascade"),
     fk("Message", [t.senderId], [user.id]).onDelete("cascade"),
+    fkIdx("Message", t.senderId),
   ],
 );

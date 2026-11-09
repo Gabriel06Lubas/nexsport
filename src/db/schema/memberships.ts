@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import { boolean, char, check, integer, pgTable, text, unique } from "drizzle-orm/pg-core";
 
-import { createdAt, fk, id, idx, tstz, uniq, updatedAt } from "../columns";
+import { createdAt, fk, fkIdx, id, idx, tstz, uniq, updatedAt } from "../columns";
 import { user } from "./auth";
 import { club } from "./clubs";
 import { membershipPlanKind, paymentMethod } from "./enums";
@@ -72,11 +72,15 @@ export const memberPass = pgTable(
   (t) => [
     unique("MemberPass_id_clubId_key").on(t.id, t.clubId),
     idx("MemberPass", t.clubId, t.expiresAt),
+    // Revenue by month (pass sales are dated by paidAt).
+    idx("MemberPass", t.clubId, t.paidAt),
     idx("MemberPass", t.userId),
     fk("MemberPass", [t.clubId], [club.id]).onDelete("cascade"),
     fk("MemberPass", [t.planId, t.clubId], [membershipPlan.id, membershipPlan.clubId]).onDelete("restrict"),
+    fkIdx("MemberPass", t.planId),
     fk("MemberPass", [t.userId], [user.id]).onDelete("cascade"),
     fk("MemberPass", [t.soldById], [user.id]).onDelete("set null"),
+    fkIdx("MemberPass", t.soldById),
     check("MemberPass_credits", sql`"creditsUsed" >= 0 AND ("creditsTotal" IS NULL OR ("creditsTotal" > 0 AND "creditsUsed" <= "creditsTotal"))`),
     check("MemberPass_period_order", sql`"expiresAt" > "startsAt"`),
     check("MemberPass_price_non_negative", sql`"priceAmount" >= 0`),

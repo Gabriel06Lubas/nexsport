@@ -171,3 +171,5 @@ The port was checked against the database the old Prisma migrations built:
 - Drizzle Studio starts and serves the schema with its relations.
 - A fresh clone runs `npm ci`, `npm run build` and `npm run dev` with no
   `.env`. No code-generation step is needed any more.
+
+See [schema-audit.md](schema-audit.md) for the November 2026 schema audit (tenant FKs, FK indexes, `updatedAt` triggers, booking holds, analytics indexes) and `npm run db:schema` for the complete DDL.

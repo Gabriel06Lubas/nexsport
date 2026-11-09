@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import { check, index, jsonb, pgTable, text, varchar } from "drizzle-orm/pg-core";
 
-import { createdAt, fk, id } from "../columns";
+import { createdAt, fk, fkIdx, id } from "../columns";
 import { user } from "./auth";
 import { adminAction } from "./enums";
 
@@ -35,6 +35,7 @@ export const adminAuditLog = pgTable(
     index("AdminAuditLog_createdAt_idx").on(t.createdAt.desc().nullsFirst()),
     index("AdminAuditLog_target_idx").on(t.targetType, t.targetId),
     fk("AdminAuditLog", [t.actorId], [user.id]).onDelete("set null"),
+    fkIdx("AdminAuditLog", t.actorId),
     check("AdminAuditLog_target_type", sql`"targetType" IN ('club', 'coach', 'plan')`),
   ],
 );

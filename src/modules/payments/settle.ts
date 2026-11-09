@@ -206,6 +206,23 @@ export async function releaseExpiredHolds(sessionId?: string) {
         ),
       )
       .returning({ participantId: paymentTransaction.participantId, facilityBookingId: paymentTransaction.facilityBookingId });
-    return releaseHeld(tx, rows);
+    const released = await releaseHeld(tx, rows);
+    if (sessionId) return released;
+    // Court holds that lapsed with no live payment (it was never written, or
+    // was closed without releasing the slot): the booking's own expiry frees
+    // the court. Served by FacilityBooking_open_holds_idx.
+    const orphans = await tx
+      .update(facilityBooking)
+      .set({ status: "CANCELLED", cancelledAt: sql`now()`, cancellationReason: "Hold expired" })
+      .where(
+        and(
+          eq(facilityBooking.status, "PENDING"),
+          lt(facilityBooking.holdExpiresAt, sql`now()`),
+          // Spelled out: inside an UPDATE, Drizzle may leave columns unqualified.
+          sql`NOT EXISTS (SELECT 1 FROM "PaymentTransaction" pt WHERE pt."facilityBookingId" = "FacilityBooking"."id" AND pt.status NOT IN ('CANCELED', 'FAILED'))`,
+        ),
+      )
+      .returning({ id: facilityBooking.id });
+    return released + orphans.length;
   });
 }

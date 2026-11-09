@@ -583,6 +583,15 @@ try {
   await phone.getByRole("navigation", { name: "Student (tabs)" }).getByRole("link", { name: "Matches" }).click();
   check(await landed(phone, `${HOME}/open-matches`), "the bottom tab bar navigates on phones");
 
+  // A court hold that lapsed with no payment row at all is released by its own holdExpiresAt.
+  await db.query(
+    `INSERT INTO "FacilityBooking"(id, "clubId", "facilityId", "customerId", "startsAt", "endsAt", status, "priceAmount", currency, "paymentMethod", "holdExpiresAt")
+     VALUES ('e2eorphanhold', 'democlub01', 'e2efacstudent', 'demoathlete01', date_trunc('hour', now()) + interval '3 days 2 hours', date_trunc('hour', now()) + interval '3 days 3 hours', 'PENDING', 2400, 'eur', 'ONLINE', now() - interval '1 minute')`,
+  );
+  await a1.goto(`${APP}${HOME}/open-matches`); // pages that show availability sweep lapsed holds first
+  const orphan = await one(`SELECT status, "cancellationReason" FROM "FacilityBooking" WHERE id = 'e2eorphanhold'`);
+  check(orphan?.status === "CANCELLED" && orphan.cancellationReason === "Hold expired", "a lapsed court hold with no payment is released (slot freed by the booking's own expiry)");
+
   check(consoleErrors.length === 0, `no browser console errors or warnings${consoleErrors.length ? `:\n  ${[...new Set(consoleErrors)].join("\n  ")}` : ""}`);
 } catch (error) {
   failures++;

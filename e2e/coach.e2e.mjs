@@ -154,7 +154,9 @@ try {
      WHERE s."coachId" = 'democoach01' AND s.status <> 'CANCELLED' AND s."startsAt" > now() - interval '90 days'`);
   check((await kpi("Average attendance rate")).includes(`${Math.round((att.attended / att.marked) * 100)}%`), `attendance rate = ${att.attended}/${att.marked}`);
   check(/h this week/.test(await kpi("Hours scheduled")), "hours scheduled this week and month");
-  await coach.goto(`${APP}${COACH}?week=${nextMonday}`);
+  // The week of the next seeded private lesson (which week that is depends on today's weekday).
+  const lessonWeek = await madridDate(`(SELECT min("startsAt") FROM "PracticeSession" WHERE "coachId" = 'democoach01' AND title = 'Private lesson' AND status = 'SCHEDULED' AND "startsAt" > now()) AT TIME ZONE 'Europe/Madrid'`);
+  await coach.goto(`${APP}${COACH}?week=${lessonWeek}`);
   check(await coach.getByRole("region", { name: /^Week of/ }).getByText("Private lesson").first().isVisible(), "the week timeline shows upcoming private lessons");
 
   // 3. New-session modal: court, coach and equipment checks ---------------------------
@@ -212,8 +214,13 @@ try {
   check(cancelled.status === "CANCELLED" && cancelled.equipment === "CANCELLED", "cancelling a session releases its reserved equipment");
 
   const wrap = coach.getByRole("region", { name: /^To wrap up/ });
-  const wrapId = (await one(`SELECT id FROM "PracticeSession" WHERE "coachId" = 'democoach01' AND status = 'SCHEDULED' AND "startsAt" < now() ORDER BY "startsAt" DESC LIMIT 1`)).id;
-  await wrap.getByRole("button", { name: "Mark completed" }).first().click();
+  // The latest past session still to wrap up that has a student (some days it's a clinic nobody joined).
+  const wrapId = (
+    await one(`SELECT s.id FROM "PracticeSession" s WHERE s."coachId" = 'democoach01' AND s.status = 'SCHEDULED' AND s."startsAt" < now()
+                 AND EXISTS (SELECT 1 FROM "SessionParticipant" p WHERE p."sessionId" = s.id AND p.status = 'ACCEPTED')
+               ORDER BY s."startsAt" DESC LIMIT 1`)
+  ).id;
+  await wrap.locator(`[data-session-id="${wrapId}"]`).getByRole("button", { name: "Mark completed" }).click();
   await coach.waitForTimeout(500);
   for (let i = 0; i < 30 && (await one(`SELECT status FROM "PracticeSession" WHERE id = $1`, [wrapId])).status !== "COMPLETED"; i++) await coach.waitForTimeout(300);
   check((await one(`SELECT status FROM "PracticeSession" WHERE id = $1`, [wrapId])).status === "COMPLETED", "a past session is marked completed");

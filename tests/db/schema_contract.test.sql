@@ -77,6 +77,62 @@ BEGIN
   END;
 END $$;
 
+-- Every foreign key has an index on its leading column (a parent delete or
+-- re-key would otherwise scan the referencing table under lock).
+INSERT INTO results
+SELECT 'FK index: ' || c.conrelid::regclass || '.' || a.attname, false
+  FROM pg_constraint c JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
+ WHERE c.contype = 'f' AND c.connamespace = 'public'::regnamespace
+   AND NOT EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid = c.conrelid AND i.indkey[0] = c.conkey[1]);
+INSERT INTO results VALUES ('every foreign key has an index on its leading column', true);
+
+-- updatedAt: a default and the touch trigger on every table that has it.
+INSERT INTO results
+SELECT 'updatedAt default and trigger: ' || c.relname, false
+  FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'updatedAt' AND NOT a.attisdropped
+ WHERE c.relnamespace = 'public'::regnamespace AND c.relkind = 'r'
+   AND (NOT a.atthasdef OR NOT pg_temp.has_trigger(c.relname, c.relname || '_touch_updated_at'));
+INSERT INTO results VALUES ('every updatedAt column has a default and the touch trigger', true);
+
+-- Same-club composite foreign keys.
+INSERT INTO results
+SELECT 'same-club FK: ' || n, pg_temp.has_constraint(split_part(n, '_', 1), n, 'f')
+  FROM unnest(ARRAY[
+    'CoachAssignment_coachMemberId_same_club_fkey', 'CoachAssignment_studentMemberId_same_club_fkey', 'CoachAssignment_ageGroupId_same_club_fkey',
+    'ClubMember_ageGroupId_same_club_fkey', 'PracticeSession_ageGroupId_same_club_fkey', 'PracticeSession_cancellationPolicyId_same_club_fkey',
+    'PaymentTransaction_cancellationPolicyId_same_club_fkey', 'PaymentTransaction_sessionId_same_club_fkey', 'PassCreditAdjustment_sessionId_same_club_fkey']) n;
+
+-- Behaviour: cross-club references refused; SET NULL clears only the key; updatedAt moves on raw UPDATEs; holds need an expiry.
+INSERT INTO "User"(id, email, role, "updatedAt") VALUES ('contract_owner', 'contract-owner@example.test', 'CLUB_OWNER', now());
+INSERT INTO "Club"(id, slug, name, country, "ownerId", "updatedAt") VALUES
+  ('contract_club_a', 'contract-club-a', 'A', 'ES', 'contract_owner', now() - interval '1 day'),
+  ('contract_club_b', 'contract-club-b', 'B', 'ES', 'contract_owner', now());
+INSERT INTO "ClubMember"(id, "clubId", "userId", role, status, "updatedAt") VALUES
+  ('contract_coach_a', 'contract_club_a', 'contract_owner', 'COACH', 'ACTIVE', now()),
+  ('contract_student_b', 'contract_club_b', 'contract_owner', 'STUDENT', 'ACTIVE', now());
+INSERT INTO "AgeGroup"(id, "clubId", name, "updatedAt") VALUES ('contract_u12', 'contract_club_a', 'U12', now());
+INSERT INTO "ClubMember"(id, "clubId", "userId", role, status, "ageGroupId", "updatedAt") VALUES ('contract_student_a', 'contract_club_a', 'contract_owner', 'STUDENT', 'ACTIVE', 'contract_u12', now());
+INSERT INTO "Facility"(id, "clubId", name, type, "updatedAt") VALUES ('contract_court', 'contract_club_a', 'Court', 'PADEL_COURT', now());
+DO $$
+BEGIN
+  BEGIN
+    INSERT INTO "CoachAssignment"(id, "clubId", "coachMemberId", "studentMemberId", "startsOn")
+      VALUES ('contract_ca', 'contract_club_a', 'contract_coach_a', 'contract_student_b', current_date);
+    INSERT INTO results VALUES ('a coach assignment can''t pair members of two clubs', false);
+  EXCEPTION WHEN foreign_key_violation THEN INSERT INTO results VALUES ('a coach assignment can''t pair members of two clubs', true);
+  END;
+  BEGIN
+    INSERT INTO "FacilityBooking"(id, "clubId", "facilityId", "startsAt", "endsAt", status, "priceAmount", "paymentMethod", "updatedAt")
+      VALUES ('contract_hold', 'contract_club_a', 'contract_court', now() + interval '1 day', now() + interval '1 day 1 hour', 'PENDING', 2000, 'ONLINE', now());
+    INSERT INTO results VALUES ('a PENDING booking needs holdExpiresAt', false);
+  EXCEPTION WHEN check_violation THEN INSERT INTO results VALUES ('a PENDING booking needs holdExpiresAt', true);
+  END;
+END $$;
+DELETE FROM "AgeGroup" WHERE id = 'contract_u12';
+INSERT INTO results SELECT 'deleting an age group clears ageGroupId but keeps clubId', "ageGroupId" IS NULL AND "clubId" = 'contract_club_a' FROM "ClubMember" WHERE id = 'contract_student_a';
+UPDATE "Club" SET name = 'A renamed' WHERE id = 'contract_club_a';
+INSERT INTO results SELECT 'a raw UPDATE refreshes updatedAt', "updatedAt" > now() - interval '1 minute' FROM "Club" WHERE id = 'contract_club_a';
+
 -- The planner can answer the overlap pre-check from an index, not a scan.
 SET LOCAL enable_seqscan = off;
 DO $$

@@ -2,7 +2,7 @@ import { sql } from "drizzle-orm";
 import { boolean, char, check, date, integer, pgTable, primaryKey, text, unique } from "drizzle-orm/pg-core";
 import type { PgTableExtraConfigValue } from "drizzle-orm/pg-core";
 
-import { createdAt, fk, id, idx, tstz, uniq, updatedAt } from "../columns";
+import { createdAt, fk, fkIdx, id, idx, tstz, uniq, updatedAt } from "../columns";
 import { user } from "./auth";
 import {
   clubMemberStatus,
@@ -108,8 +108,11 @@ export const ageGroup = pgTable(
   },
   (t) => [
     uniq("AgeGroup", t.clubId, t.name),
+    // Target of the same-club FKs (ClubMember, CoachAssignment, PracticeSession).
+    uniq("AgeGroup", t.id, t.clubId),
     fk("AgeGroup", [t.clubId], [club.id]).onDelete("cascade"),
     fk("AgeGroup", [t.sportId], [sport.id]).onDelete("set null"),
+    fkIdx("AgeGroup", t.sportId),
     check(
       "AgeGroup_age_bounds",
       sql`("minAge" IS NULL OR "minAge" >= 0) AND ("maxAge" IS NULL OR "maxAge" >= 0) AND ("minAge" IS NULL OR "maxAge" IS NULL OR "minAge" <= "maxAge")`,
@@ -152,11 +155,14 @@ export const clubMember = pgTable(
   },
   (t) => [
     uniq("ClubMember", t.clubId, t.userId, t.role),
+    // Target of CoachAssignment's same-club FKs.
+    uniq("ClubMember", t.id, t.clubId),
     idx("ClubMember", t.userId, t.status),
     idx("ClubMember", t.clubId, t.role, t.status),
     fk("ClubMember", [t.clubId], [club.id]).onDelete("cascade"),
     fk("ClubMember", [t.userId], [user.id]).onDelete("cascade"),
     fk("ClubMember", [t.ageGroupId], [ageGroup.id]).onDelete("set null"),
+    fkIdx("ClubMember", t.ageGroupId),
     check("ClubMember_wage_non_negative", sql`"hourlyWageAmount" IS NULL OR "hourlyWageAmount" >= 0`),
     check("ClubMember_commission_bps", sql`"commissionBps" IS NULL OR "commissionBps" BETWEEN 0 AND 10000`),
   ],
@@ -184,7 +190,9 @@ export const coachAssignment = pgTable(
     fk("CoachAssignment", [t.coachMemberId], [clubMember.id]).onDelete("cascade"),
     fk("CoachAssignment", [t.studentMemberId], [clubMember.id]).onDelete("cascade"),
     fk("CoachAssignment", [t.ageGroupId], [ageGroup.id]).onDelete("cascade"),
+    fkIdx("CoachAssignment", t.ageGroupId),
     fk("CoachAssignment", [t.sportId], [sport.id]).onDelete("cascade"),
+    fkIdx("CoachAssignment", t.sportId),
     check("CoachAssignment_has_target", sql`"studentMemberId" IS NOT NULL OR "ageGroupId" IS NOT NULL`),
     check("CoachAssignment_date_order", sql`"endsOn" IS NULL OR "endsOn" >= "startsOn"`),
   ],
@@ -302,7 +310,9 @@ export const equipmentMaintenance = pgTable(
     fk("EquipmentMaintenance", [t.clubId], [club.id]).onDelete("cascade"),
     fk("EquipmentMaintenance", [t.equipmentId, t.clubId], [equipment.id, equipment.clubId]).onDelete("cascade"),
     fk("EquipmentMaintenance", [t.reportedById], [user.id]).onDelete("set null"),
+    fkIdx("EquipmentMaintenance", t.reportedById),
     fk("EquipmentMaintenance", [t.resolvedById], [user.id]).onDelete("set null"),
+    fkIdx("EquipmentMaintenance", t.resolvedById),
     check("EquipmentMaintenance_quantity_positive", sql`"quantity" > 0`),
     check("EquipmentMaintenance_resolution_order", sql`"resolvedAt" IS NULL OR "resolvedAt" >= "startedAt"`),
   ],

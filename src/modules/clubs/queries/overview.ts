@@ -17,17 +17,27 @@ import { rows, type ClubRef } from "./shared";
 //   * Pass holders: members with a pass valid now (started, not expired,
 //     not cancelled, credits left).
 
-/** Bookings that occupy a facility: coached sessions and court rentals. */
-const occupancy = (clubId: string) => sql`
-  SELECT "facilityId", "startsAt", "endsAt" FROM "PracticeSession" WHERE "clubId" = ${clubId} AND status <> 'CANCELLED'
+/**
+ * Bookings that occupy a facility (coached sessions and court rentals) and
+ * overlap the last `days` days. Nothing lasts over 24 hours (the
+ * *_max_duration checks), so "startsAt" is also bounded from below: the
+ * (clubId, startsAt) indexes then read only the window, not the club's
+ * whole history.
+ */
+const occupancy = (clubId: string, days: number) => sql`
+  SELECT "facilityId", "startsAt", "endsAt" FROM "PracticeSession"
+   WHERE "clubId" = ${clubId} AND status <> 'CANCELLED'
+     AND "startsAt" < now() AND "startsAt" > now() - make_interval(days => ${days + 1}) AND "endsAt" > now() - make_interval(days => ${days})
   UNION ALL
-  SELECT "facilityId", "startsAt", "endsAt" FROM "FacilityBooking" WHERE "clubId" = ${clubId} AND status <> 'CANCELLED'`;
+  SELECT "facilityId", "startsAt", "endsAt" FROM "FacilityBooking"
+   WHERE "clubId" = ${clubId} AND status <> 'CANCELLED'
+     AND "startsAt" < now() AND "startsAt" > now() - make_interval(days => ${days + 1}) AND "endsAt" > now() - make_interval(days => ${days})`;
 
 export type FacilityUtilisation = { id: string; name: string; availableHours: number; bookedHours: number };
 
 export async function getUtilisation(club: ClubRef) {
   const facilities = await rows<FacilityUtilisation>(sql`
-    WITH b AS (${occupancy(club.id)})
+    WITH b AS (${occupancy(club.id, 30)})
     SELECT f.id, f.name,
            (f."closeMinute" - f."openMinute") * 30 / 60.0 AS "availableHours",
            COALESCE(sum(extract(epoch FROM least(b."endsAt", now()) - greatest(b."startsAt", now() - interval '30 days')) / 3600), 0)::float8 AS "bookedHours"
@@ -109,7 +119,7 @@ export type HeatCell = { dow: number; hour: number; minutes: number };
 export async function getOccupancyHeatmap(club: ClubRef) {
   const [cells, [hours]] = await Promise.all([
     rows<HeatCell>(sql`
-      WITH b AS (${occupancy(club.id)}),
+      WITH b AS (${occupancy(club.id, 28)}),
       w AS (
         SELECT greatest(b."startsAt", now() - interval '28 days') AS s, least(b."endsAt", now()) AS e
           FROM b JOIN "Facility" f ON f.id = b."facilityId" AND f."isActive"

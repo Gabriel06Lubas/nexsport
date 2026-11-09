@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
-import { char, check, integer, numeric, pgTable, smallint, text, unique } from "drizzle-orm/pg-core";
+import { char, check, index, integer, numeric, pgTable, smallint, text, unique } from "drizzle-orm/pg-core";
 
-import { createdAt, fk, id, idx, tstz, uniq, updatedAt } from "../columns";
+import { createdAt, fk, fkIdx, id, idx, tstz, uniq, updatedAt } from "../columns";
 import { user } from "./auth";
 import { cancellationPolicy } from "./billing";
 import { ageGroup, club, equipment, facility, sport } from "./clubs";
@@ -78,11 +78,18 @@ export const practiceSession = pgTable(
     fk("PracticeSession", [t.facilityId, t.clubId], [facility.id, facility.clubId]).onDelete("restrict"),
     fk("PracticeSession", [t.coachId], [user.id]).onDelete("restrict"),
     fk("PracticeSession", [t.createdById], [user.id]).onDelete("restrict"),
+    fkIdx("PracticeSession", t.createdById),
     fk("PracticeSession", [t.cancelledById], [user.id]).onDelete("set null"),
+    fkIdx("PracticeSession", t.cancelledById),
     fk("PracticeSession", [t.sportId], [sport.id]).onDelete("restrict"),
+    fkIdx("PracticeSession", t.sportId),
     fk("PracticeSession", [t.ageGroupId], [ageGroup.id]).onDelete("set null"),
+    fkIdx("PracticeSession", t.ageGroupId),
     fk("PracticeSession", [t.cancellationPolicyId], [cancellationPolicy.id]).onDelete("set null"),
+    fkIdx("PracticeSession", t.cancellationPolicyId),
     check("PracticeSession_time_order", sql`"endsAt" > "startsAt"`),
+    // Lets range queries bound "startsAt" from below (startsAt > from − 1 day), so they use the index.
+    check("PracticeSession_max_duration", sql`"endsAt" - "startsAt" <= interval '24 hours'`),
     check("PracticeSession_price_non_negative", sql`"priceAmount" >= 0`),
     check("PracticeSession_currency_format", sql`"currency" ~ '^[a-z]{3}$'`),
     check("PracticeSession_coach_share_bps", sql`"coachShareBps" BETWEEN 0 AND 10000`),
@@ -116,6 +123,7 @@ export const sessionParticipant = pgTable(
     fk("SessionParticipant", [t.sessionId], [practiceSession.id]).onDelete("cascade"),
     fk("SessionParticipant", [t.userId], [user.id]).onDelete("cascade"),
     fk("SessionParticipant", [t.invitedById], [user.id]).onDelete("set null"),
+    fkIdx("SessionParticipant", t.invitedById),
   ],
 );
 
@@ -144,6 +152,7 @@ export const attendance = pgTable(
     fk("Attendance", [t.participantId], [sessionParticipant.id]).onDelete("cascade"),
     fk("Attendance", [t.userId], [user.id]).onDelete("cascade"),
     fk("Attendance", [t.markedById], [user.id]).onDelete("set null"),
+    fkIdx("Attendance", t.markedById),
     check("Attendance_rating_range", sql`"performanceRating" IS NULL OR "performanceRating" BETWEEN 1 AND 5`),
   ],
 );
@@ -242,6 +251,14 @@ export const facilityBooking = pgTable(
     paymentMethod: paymentMethod().notNull(),
     /** On-site / complimentary: when the desk collected it. Online: Stripe success. */
     paidAt: tstz(),
+    /**
+     * When the unpaid hold lapses (COURT_HOLD_MINUTES, 15 min); required while
+     * PENDING, kept afterwards as history.
+     * The slot stays blocked by FacilityBooking_no_overlap until then; the
+     * sweeper (releaseExpiredHolds) cancels lapsed holds, even ones whose
+     * payment row is missing.
+     */
+    holdExpiresAt: tstz(),
     notes: text(),
     cancelledAt: tstz(),
     cancelledById: text(),
@@ -251,17 +268,25 @@ export const facilityBooking = pgTable(
   },
   (t) => [
     unique("FacilityBooking_id_clubId_key").on(t.id, t.clubId),
+    // The sweeper's lookup: only open holds are indexed.
+    index("FacilityBooking_open_holds_idx").on(t.holdExpiresAt).where(sql`"status" = 'PENDING'`),
     idx("FacilityBooking", t.clubId, t.startsAt),
     idx("FacilityBooking", t.facilityId, t.startsAt),
+    // Revenue by month (desk payments are dated by paidAt).
+    idx("FacilityBooking", t.clubId, t.paidAt),
     idx("FacilityBooking", t.customerId),
     fk("FacilityBooking", [t.clubId], [club.id]).onDelete("cascade"),
     fk("FacilityBooking", [t.facilityId, t.clubId], [facility.id, facility.clubId]).onDelete("restrict"),
     fk("FacilityBooking", [t.customerId], [user.id]).onDelete("set null"),
     fk("FacilityBooking", [t.bookedById], [user.id]).onDelete("set null"),
+    fkIdx("FacilityBooking", t.bookedById),
     fk("FacilityBooking", [t.cancelledById], [user.id]).onDelete("set null"),
+    fkIdx("FacilityBooking", t.cancelledById),
     check("FacilityBooking_time_order", sql`"endsAt" > "startsAt"`),
+    check("FacilityBooking_max_duration", sql`"endsAt" - "startsAt" <= interval '24 hours'`),
     check("FacilityBooking_price_non_negative", sql`"priceAmount" >= 0`),
     check("FacilityBooking_currency_format", sql`"currency" ~ '^[a-z]{3}$'`),
     check("FacilityBooking_cancellation_consistent", sql`("status" = 'CANCELLED') = ("cancelledAt" IS NOT NULL)`),
+    check("FacilityBooking_hold_consistent", sql`"status" <> 'PENDING' OR "holdExpiresAt" IS NOT NULL`),
   ],
 );

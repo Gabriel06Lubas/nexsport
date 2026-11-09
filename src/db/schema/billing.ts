@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import { boolean, char, check, integer, pgTable, text, uniqueIndex } from "drizzle-orm/pg-core";
 
-import { createdAt, fk, id, idx, tstz, uniq, updatedAt } from "../columns";
+import { createdAt, fk, fkIdx, id, idx, tstz, uniq, updatedAt } from "../columns";
 import { user } from "./auth";
 import { club } from "./clubs";
 import {
@@ -103,6 +103,7 @@ export const subscriptionPlan = pgTable(
   (t) => [
     uniq("SubscriptionPlan", t.stripePriceId),
     fk("SubscriptionPlan", [t.updatedById], [user.id]).onDelete("set null"),
+    fkIdx("SubscriptionPlan", t.updatedById),
     check("SubscriptionPlan_price_non_negative", sql`"monthlyPriceAmount" >= 0`),
     check("SubscriptionPlan_fee_bps", sql`"platformFeeBps" BETWEEN 0 AND 10000`),
     check("SubscriptionPlan_currency_format", sql`"currency" ~ '^[a-z]{3}$'`),
@@ -241,6 +242,7 @@ export const paymentTransaction = pgTable(
     fk("PaymentTransaction", [t.payerId], [user.id]).onDelete("restrict"),
     fk("PaymentTransaction", [t.coachId], [user.id]).onDelete("set null"),
     fk("PaymentTransaction", [t.cancellationPolicyId], [cancellationPolicy.id]).onDelete("set null"),
+    fkIdx("PaymentTransaction", t.cancellationPolicyId),
     check(
       "PaymentTransaction_kind_target",
       sql`CASE "kind"
@@ -319,6 +321,8 @@ export const cancellationPolicy = pgTable(
   },
   (t) => [
     uniq("CancellationPolicy", t.clubId, t.name),
+    // Target of the same-club FKs (PracticeSession, PaymentTransaction).
+    uniq("CancellationPolicy", t.id, t.clubId),
     // At most one default policy per club.
     uniqueIndex("CancellationPolicy_one_default_per_club").on(t.clubId).where(sql`"isDefault"`),
     fk("CancellationPolicy", [t.clubId], [club.id]).onDelete("cascade"),
@@ -398,6 +402,7 @@ export const planCheckout = pgTable(
     uniqueIndex("PlanCheckout_open_slug_key").on(t.clubSlug).where(sql`"status" = 'OPEN' AND "clubSlug" IS NOT NULL`),
     fk("PlanCheckout", [t.userId], [user.id]).onDelete("cascade"),
     fk("PlanCheckout", [t.clubId], [club.id]).onDelete("set null"),
+    fkIdx("PlanCheckout", t.clubId),
     check(
       "PlanCheckout_kind_shape",
       sql`CASE "kind"

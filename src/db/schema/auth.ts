@@ -2,7 +2,7 @@ import { sql } from "drizzle-orm";
 import { boolean, check, date, integer, numeric, pgTable, primaryKey, text, varchar } from "drizzle-orm/pg-core";
 import type { PgTableExtraConfigValue } from "drizzle-orm/pg-core";
 
-import { createdAt, fk, id, idx, tstz, uniq, updatedAt } from "../columns";
+import { createdAt, fk, fkIdx, id, idx, tstz, uniq, updatedAt } from "../columns";
 import { club, sport } from "./clubs";
 import { emailCodePurpose, followStatus, userRole } from "./enums";
 
@@ -40,6 +40,7 @@ export const user = pgTable(
     uniq("User", t.stripeCustomerId),
     idx("User", t.role),
     fk("User", [t.activeClubId], [club.id]).onDelete("set null"),
+    fkIdx("User", t.activeClubId),
   ],
 );
 
@@ -97,6 +98,7 @@ export const session = pgTable(
     idx("Session", t.expires),
     fk("Session", [t.userId], [user.id]).onDelete("cascade"),
     fk("Session", [t.impersonatorId], [user.id]).onDelete("cascade"),
+    fkIdx("Session", t.impersonatorId),
     // Tokens are stored as lowercase hex SHA-256 digests, never raw.
     check("Session_tokenHash_sha256", sql`"tokenHash" ~ '^[0-9a-f]{64}$'`),
   ],

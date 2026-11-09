@@ -144,6 +144,7 @@ export async function createCourtBookingAction(_prev: CourtBookingState, formDat
           startsAt,
           endsAt,
           status: "PENDING",
+          holdExpiresAt,
           priceAmount: amount,
           currency: target.currency,
           paymentMethod: "ONLINE",

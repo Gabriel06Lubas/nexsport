@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import { boolean, char, check, integer, pgTable, smallint, text } from "drizzle-orm/pg-core";
 
-import { createdAt, fk, id, idx, tstz, uniq, updatedAt } from "../columns";
+import { createdAt, fk, fkIdx, id, idx, tstz, uniq, updatedAt } from "../columns";
 import { user } from "./auth";
 import { club, facility, sport } from "./clubs";
 import { memberPass } from "./memberships";
@@ -45,6 +45,7 @@ export const coachProfile = pgTable(
     uniq("CoachProfile", t.slug),
     fk("CoachProfile", [t.userId], [user.id]).onDelete("cascade"),
     fk("CoachProfile", [t.sportId], [sport.id]).onDelete("set null"),
+    fkIdx("CoachProfile", t.sportId),
     check("CoachProfile_slug_format", sql`"slug" ~ '^[a-z0-9]+(-[a-z0-9]+)*$' AND length("slug") BETWEEN 3 AND 48`),
     check("CoachProfile_rates_non_negative", sql`("privateRateAmount" IS NULL OR "privateRateAmount" >= 0) AND ("groupRateAmount" IS NULL OR "groupRateAmount" >= 0)`),
     check("CoachProfile_currency_format", sql`"currency" ~ '^[a-z]{3}$'`),
@@ -81,6 +82,7 @@ export const coachAvailability = pgTable(
     fk("CoachAvailability", [t.clubId], [club.id]).onDelete("cascade"),
     // The preferred facility must belong to the window's club.
     fk("CoachAvailability", [t.facilityId, t.clubId], [facility.id, facility.clubId]).onDelete("cascade"),
+    fkIdx("CoachAvailability", t.facilityId),
     check("CoachAvailability_day_of_week", sql`"dayOfWeek" BETWEEN 1 AND 7`),
     check(
       "CoachAvailability_window",
@@ -110,9 +112,11 @@ export const passCreditAdjustment = pgTable(
     idx("PassCreditAdjustment", t.passId, t.createdAt),
     idx("PassCreditAdjustment", t.actorId, t.createdAt),
     fk("PassCreditAdjustment", [t.clubId], [club.id]).onDelete("cascade"),
+    fkIdx("PassCreditAdjustment", t.clubId),
     fk("PassCreditAdjustment", [t.passId, t.clubId], [memberPass.id, memberPass.clubId]).onDelete("cascade"),
     fk("PassCreditAdjustment", [t.actorId], [user.id]).onDelete("set null"),
     fk("PassCreditAdjustment", [t.sessionId], [practiceSession.id]).onDelete("set null"),
+    fkIdx("PassCreditAdjustment", t.sessionId),
     check("PassCreditAdjustment_delta", sql`"delta" IN (-1, 1)`),
   ],
 );

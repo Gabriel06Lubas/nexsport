@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import { index, jsonb, pgTable, text } from "drizzle-orm/pg-core";
 
-import { createdAt, fk, id, tstz } from "../columns";
+import { createdAt, fk, fkIdx, id, tstz } from "../columns";
 import { user } from "./auth";
 import { club } from "./clubs";
 import { notificationType } from "./enums";
@@ -41,9 +41,14 @@ export const notification = pgTable(
       .where(sql`"readAt" IS NULL`),
     fk("Notification", [t.recipientId], [user.id]).onDelete("cascade"),
     fk("Notification", [t.actorId], [user.id]).onDelete("set null"),
+    fkIdx("Notification", t.actorId),
     fk("Notification", [t.clubId], [club.id]).onDelete("cascade"),
+    fkIdx("Notification", t.clubId),
     fk("Notification", [t.sessionId], [practiceSession.id]).onDelete("cascade"),
+    fkIdx("Notification", t.sessionId),
     fk("Notification", [t.postId], [post.id]).onDelete("cascade"),
+    fkIdx("Notification", t.postId),
     fk("Notification", [t.commentId], [comment.id]).onDelete("cascade"),
+    fkIdx("Notification", t.commentId),
   ],
 );

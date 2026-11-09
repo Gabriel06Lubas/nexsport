@@ -19,6 +19,7 @@
     "db:migrate": "node scripts/db-migrate.mjs",
     "db:seed": "node scripts/seed-demo.mjs",
     "db:check": "drizzle-kit check",
+    "db:schema": "node scripts/db-schema.mjs",
     "stripe:plans": "node scripts/stripe-plans.mjs",
     "db:studio": "drizzle-kit studio",
     "db:test": "psql \"${DATABASE_URL%%\\?*}\" -v ON_ERROR_STOP=1 -q -f tests/db/booking_guards.test.sql -f tests/db/club_guards.test.sql -f tests/db/coach_guards.test.sql -f tests/db/schema_contract.test.sql && tests/db/booking_races.sh",
