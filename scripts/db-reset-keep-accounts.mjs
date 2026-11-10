@@ -5,8 +5,10 @@
 //   npm run db:reset-keep-accounts -- --yes   does it
 //
 // Kept: users and their sign-ins (User, Account, Session), personal details
-// (Profile, ProfileSport, AthleteSettings), and the reference data the app
-// needs (Sport, SubscriptionPlan with its Stripe Price ids).
+// (Profile, ProfileSport, AthleteSettings), and the structural data that
+// belongs to no club or user: the sports catalogue (Sport) and the plans
+// (SubscriptionPlan, with their limits, fees and Stripe Price ids). The
+// migration history (drizzle schema) is never touched.
 // Deleted: every other table: clubs, courts, bookings, sessions, payments,
 // subscriptions, passes, plan checkouts, notifications, social posts, logs.
 // New tables are deleted by default; add one to KEEP to keep it.
@@ -48,7 +50,8 @@ try {
     if (n) console.log(`  ${t.padEnd(26)} ${n}`);
   }
   console.log(`  ${"total".padEnd(26)} ${total} rows in ${wipe.length} tables`);
-  console.log(`Keeping: ${[...KEEP].join(", ")} (${await count("User")} users)`);
+  console.log("Keeping (accounts and structural data):");
+  for (const t of KEEP) console.log(`  ${t.padEnd(26)} ${await count(t)}`);
   if (!apply) process.exit(0);
 
   const { rows: [me] } = await db.query(`SELECT rolsuper FROM pg_roles WHERE rolname = current_user`);
