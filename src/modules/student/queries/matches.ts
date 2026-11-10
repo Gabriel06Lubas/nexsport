@@ -2,11 +2,12 @@ import "server-only";
 
 import { sql } from "drizzle-orm";
 
+import { clubOpenToPublicSql } from "@/lib/entitlements";
 import { rows } from "@/modules/clubs/queries/shared";
 
 // The open-match board: upcoming OPEN_MATCH sessions with free seats (or the
-// student's own), at clubs that are open for business and on an active Club
-// Enterprise subscription (open matches are an Enterprise feature).
+// student's own), at clubs open to the public whose plan includes open
+// matches (clubOpenToPublicSql), run by a coach who isn't suspended.
 
 export type OpenMatch = {
   id: string;
@@ -39,15 +40,15 @@ export async function listOpenMatches(userId: string, filter: { sportId: string 
            bool_or(p."userId" = ${userId} AND p.status = 'ACCEPTED') IS TRUE AS joined
       FROM "PracticeSession" s
       JOIN "Sport" sp ON sp.id = s."sportId"
-      JOIN "Club" c ON c.id = s."clubId" AND c."deletedAt" IS NULL AND c.status IN ('ACTIVE', 'PENDING_SETUP')
+      JOIN "Club" c ON c.id = s."clubId"
       JOIN "Facility" f ON f.id = s."facilityId"
-      JOIN "User" co ON co.id = s."coachId"
+      JOIN "User" co ON co.id = s."coachId" AND co."suspendedAt" IS NULL AND co."deletedAt" IS NULL
       LEFT JOIN "SessionParticipant" p ON p."sessionId" = s.id
      WHERE s.kind = 'OPEN_MATCH' AND s.status = 'SCHEDULED' AND s."startsAt" > now()
        AND s."startsAt" < now() + make_interval(days => ${filter.days})
        AND (${filter.sportId}::text IS NULL OR s."sportId" = ${filter.sportId})
        AND (${filter.clubId}::text IS NULL OR s."clubId" = ${filter.clubId})
-       AND EXISTS (SELECT 1 FROM "Subscription" sub WHERE sub."clubId" = s."clubId" AND sub.tier = 'CLUB_ENTERPRISE' AND sub.status IN ('ACTIVE', 'TRIALING'))
+       AND ${clubOpenToPublicSql(sql`c`, "open_matches")}
      GROUP BY s.id, sp.id, c.id, f.id, co.id
      ORDER BY s."startsAt"
      LIMIT 100`);

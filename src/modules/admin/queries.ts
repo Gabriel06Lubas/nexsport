@@ -16,7 +16,10 @@ import { escapeLike, PAGE_SIZE } from "@/lib/list-params";
 //     COACH, not deleted). Coaches without a paid plan are on FREE_COACH.
 //   * Live subscription: status other than CANCELED / INCOMPLETE_EXPIRED.
 //   * MRR: sum of Subscription.monthlyAmount for ACTIVE and PAST_DUE
-//     subscriptions (trials aren't paying yet), per currency.
+//     subscriptions (trials aren't paying yet; past-due is revenue at risk,
+//     still billed), per currency.
+//   * Pro coaches: entitled ones (ACTIVE / TRIALING), as the app treats them.
+//   * Sessions: not cancelled; "last 30 days" means started in that window.
 //   * Volume: amount of SUCCEEDED payments, before refunds, per currency.
 
 export type MoneyTotal = { currency: string; amount: number };
@@ -44,7 +47,7 @@ export async function getOverview() {
         (SELECT count(*)::int FROM "User" WHERE role = 'COACH' AND "deletedAt" IS NULL AND "suspendedAt" IS NULL) AS coaches,
         (SELECT count(*)::int FROM "User" WHERE role = 'COACH' AND "deletedAt" IS NULL AND "suspendedAt" IS NOT NULL) AS "coachesSuspended",
         (SELECT count(DISTINCT s."userId")::int FROM "Subscription" s
-           WHERE s.tier = 'PRO_COACH' AND s.status IN ('ACTIVE', 'PAST_DUE', 'TRIALING')) AS "proCoaches"`),
+           WHERE s.tier = 'PRO_COACH' AND s.status IN ('ACTIVE', 'TRIALING')) AS "proCoaches"`),
     rows<{ total: number; healthy: number }>(sql`
       SELECT count(*)::int AS total, count(*) FILTER (WHERE "chargesEnabled" AND "payoutsEnabled")::int AS healthy
       FROM "StripeAccount"`),
@@ -173,7 +176,7 @@ export async function getClubDetail(id: string) {
       SELECT (SELECT count(*)::int FROM "ClubMember" WHERE "clubId" = ${id} AND role = 'STUDENT' AND status = 'ACTIVE') AS members,
              (SELECT count(*)::int FROM "ClubMember" WHERE "clubId" = ${id} AND role IN ('COACH', 'STAFF') AND status = 'ACTIVE') AS coaches,
              (SELECT count(*)::int FROM "Facility" WHERE "clubId" = ${id} AND "isActive") AS facilities,
-             (SELECT count(*)::int FROM "PracticeSession" WHERE "clubId" = ${id} AND "startsAt" > now() - interval '30 days') AS "sessions30"`),
+             (SELECT count(*)::int FROM "PracticeSession" WHERE "clubId" = ${id} AND status <> 'CANCELLED' AND "startsAt" BETWEEN now() - interval '30 days' AND now()) AS "sessions30"`),
     recentPayments(sql`pt."clubId" = ${id}`),
     auditFor("club", id),
   ]);
@@ -200,9 +203,9 @@ export async function getCoachDetail(id: string) {
     tenantSubscription(sql`s."userId" = ${id}`),
     tenantConnect(sql`"userId" = ${id}`),
     rows<{ clubs: number; sessions30: number; sessionsTotal: number }>(sql`
-      SELECT (SELECT count(DISTINCT "clubId")::int FROM "ClubMember" WHERE "userId" = ${id} AND status = 'ACTIVE') AS clubs,
-             (SELECT count(*)::int FROM "PracticeSession" WHERE "coachId" = ${id} AND "startsAt" > now() - interval '30 days') AS "sessions30",
-             (SELECT count(*)::int FROM "PracticeSession" WHERE "coachId" = ${id}) AS "sessionsTotal"`),
+      SELECT (SELECT count(DISTINCT "clubId")::int FROM "ClubMember" WHERE "userId" = ${id} AND role = 'COACH' AND status = 'ACTIVE') AS clubs,
+             (SELECT count(*)::int FROM "PracticeSession" WHERE "coachId" = ${id} AND status <> 'CANCELLED' AND "startsAt" BETWEEN now() - interval '30 days' AND now()) AS "sessions30",
+             (SELECT count(*)::int FROM "PracticeSession" WHERE "coachId" = ${id} AND status <> 'CANCELLED') AS "sessionsTotal"`),
     recentPayments(sql`pt."coachId" = ${id}`),
     auditFor("coach", id),
   ]);

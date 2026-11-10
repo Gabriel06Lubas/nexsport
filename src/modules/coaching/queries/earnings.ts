@@ -19,7 +19,12 @@ export async function getCoachConnectAccount(userId: string) {
 
 export type StreamRow = { kind: "PRIVATE" | "GROUP" | "OPEN_MATCH"; sessions: number; gross: number; share: number; share30: number; pending: number };
 
-export async function getEarningsByStream(coachId: string) {
+// Totals are in one currency, the coach's (CoachProfile.currency): a coach on
+// the roster of clubs in different countries is paid in each club's
+// currency, and adding euros to pounds means nothing. Every payment still
+// appears, in its own currency, in listEarnings.
+
+export async function getEarningsByStream(coachId: string, currency: string) {
   return rows<StreamRow>(sql`
     SELECT s.kind,
            count(DISTINCT s.id)::int AS sessions,
@@ -28,25 +33,25 @@ export async function getEarningsByStream(coachId: string) {
            COALESCE(sum(tr.amount - tr."reversedAmount") FILTER (WHERE tr.status IN ('PAID', 'PENDING') AND pt."paidAt" > now() - interval '30 days'), 0)::float8 AS share30,
            COALESCE(sum(tr.amount) FILTER (WHERE tr.status = 'PENDING'), 0)::float8 AS pending
       FROM "PracticeSession" s
-      JOIN "PaymentTransaction" pt ON pt."sessionId" = s.id AND pt.status = 'SUCCEEDED'
+      JOIN "PaymentTransaction" pt ON pt."sessionId" = s.id AND pt.status = 'SUCCEEDED' AND pt.currency = ${currency}
       LEFT JOIN "PaymentTransfer" tr ON tr."paymentId" = pt.id AND tr."recipientType" = 'COACH'
      WHERE s."coachId" = ${coachId}
      GROUP BY s.kind`);
 }
 
-export async function getPayoutTotals(coachId: string) {
+export async function getPayoutTotals(coachId: string, currency: string) {
   const [t] = await rows<{ paid30: number; pending: number; failed: number; fees30: number }>(sql`
     WITH tr AS (
       SELECT tr.*, pt."paidAt" FROM "PaymentTransfer" tr
         JOIN "PaymentTransaction" pt ON pt.id = tr."paymentId"
         JOIN "StripeAccount" sa ON sa.id = tr."stripeAccountId"
-       WHERE sa."userId" = ${coachId} AND tr."recipientType" = 'COACH'
+       WHERE sa."userId" = ${coachId} AND tr."recipientType" = 'COACH' AND tr.currency = ${currency}
     )
     SELECT COALESCE((SELECT sum(amount - "reversedAmount") FROM tr WHERE status = 'PAID' AND "paidAt" > now() - interval '30 days'), 0)::float8 AS paid30,
            COALESCE((SELECT sum(amount) FROM tr WHERE status = 'PENDING'), 0)::float8 AS pending,
            COALESCE((SELECT sum(amount) FROM tr WHERE status IN ('FAILED', 'REVERSED')), 0)::float8 AS failed,
            COALESCE((SELECT sum(pt."applicationFeeAmount") FROM "PaymentTransaction" pt JOIN "PracticeSession" s ON s.id = pt."sessionId"
-                      WHERE s."coachId" = ${coachId} AND pt.status = 'SUCCEEDED' AND pt."paidAt" > now() - interval '30 days'), 0)::float8 AS fees30`);
+                      WHERE s."coachId" = ${coachId} AND pt.status = 'SUCCEEDED' AND pt.currency = ${currency} AND pt."paidAt" > now() - interval '30 days'), 0)::float8 AS fees30`);
   return t!;
 }
 

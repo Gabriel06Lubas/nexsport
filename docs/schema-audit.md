@@ -128,3 +128,46 @@ Why the key constraints and indexes are set up as they are:
 - a `PENDING` booking needs `holdExpiresAt`.
 
 A later migration that undoes any of these fails `npm run db:test`.
+
+## 4. Query review (all queries)
+
+I read every query in the app, about 450 raw SQL and Drizzle statements
+across 60 files, checking each against the rules that must hold
+everywhere:
+- tenant scoping;
+- deleted and suspended users and clubs;
+- club status and subscription on public pages;
+- what counts as cancelled, occupied, paid or active;
+- currencies in totals;
+- search escaping.
+
+No query swallows database errors (every `.catch` is around a Stripe call
+or a logged path), and all six e2e suites run every page and action.
+
+**What held everywhere:**
+- Every `UPDATE` and `DELETE` is scoped to its owner: club actions to
+  `clubId`, athlete actions to the athlete, coach actions to the coach,
+  webhooks to Stripe ids.
+- Searches escape `%` and `_` (`escapeLike`).
+- Every value is a bound parameter.
+- "Active member", "live subscription", "valid pass" and booking overlap
+  (`status <> 'CANCELLED'`) mean the same thing in every query that uses
+  them.
+
+**Fixed:**
+
+| Inconsistency | Fix |
+| --- | --- |
+| "Club open to athletes" was written four ways. Court booking required `ACTIVE` while coach slots and open matches also allowed `PENDING_SETUP`. Joining a match didn't check `deletedAt`. The board hard-coded `tier = 'CLUB_ENTERPRISE'` while the action read features from `plans.json`. | One rule, `clubOpenToPublicSql` / `clubEntitledSql` in `src/lib/entitlements.ts` (the SQL twin of `requireActiveSubscription` / `hasClubFeature`). It's used by the bookable-court list, the court booking action, coach booking slots, the open-match board and joining a match. Feature tiers come from `plans.json`. |
+| A suspended coach's open matches stayed on the board and could be joined and paid for, while their booking page was hidden. | The board and joining both require the coach to be neither suspended nor deleted (e2e-tested). |
+| Coach earnings and payout totals added up every currency, then labelled the sum in the coach's currency. | Totals are in the coach's currency. Each payment still appears in the list in its own currency. |
+| Admin: "Pro coaches" counted `PAST_DUE` (the app treats them as Free Coach); "Clubs coached at" counted any membership, e.g. as a student; "Sessions (last 30 days)" included upcoming and cancelled sessions. | Pro means `ACTIVE` / `TRIALING`; clubs means `role = 'COACH'`; sessions are not cancelled and started within the window. |
+
+**For you to decide (unchanged):**
+- **Cancelled desk sales.** A desk-paid court booking that is cancelled
+  drops out of the club's revenue chart. A desk-paid pass that is
+  cancelled stays in. That's right if the desk refunds bookings but not
+  passes; if not, one of the two should change.
+- **Payout wording on Billing.** "Paid out to your account" counts only
+  completed club transfers (pending ones are shown separately). "Went to
+  coaches" includes pending coach transfers.

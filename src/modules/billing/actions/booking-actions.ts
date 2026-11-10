@@ -7,6 +7,7 @@ import { db } from "@/db";
 import { isBookingConflict } from "@/db/errors";
 import { club, facility, facilityBooking, facilityPriceRule, paymentTransaction, practiceSession, stripeAccount } from "@/db/schema";
 import { formValues, invalid, type ActionState } from "@/lib/action-state";
+import { clubOpenToPublicSql } from "@/lib/entitlements";
 import { formatMoney } from "@/lib/utils";
 import { quoteBooking } from "@/modules/clubs/lib/pricing";
 import { minuteToTime } from "@/modules/clubs/lib/zoned-time";
@@ -86,12 +87,10 @@ export async function createCourtBookingAction(_prev: CourtBookingState, formDat
       and(
         eq(facility.id, req.facilityId),
         eq(facility.isActive, true),
-        eq(club.status, "ACTIVE"),
-        sql`${club.deletedAt} IS NULL`,
         eq(stripeAccount.chargesEnabled, true),
         eq(stripeAccount.payoutsEnabled, true),
-        // The club's nexport subscription must be live (not PAST_DUE / CANCELED).
-        sql`EXISTS (SELECT 1 FROM "Subscription" sub WHERE sub."clubId" = ${club.id} AND sub.status IN ('ACTIVE', 'TRIALING'))`,
+        // Same rule as the list of bookable courts: open to the public, with a live subscription.
+        clubOpenToPublicSql(sql`"Club"`),
       ),
     );
   if (!target) return fail("facilityId", "That court can't be booked online");

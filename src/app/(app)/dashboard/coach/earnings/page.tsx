@@ -35,8 +35,8 @@ export default async function EarningsPage({ searchParams }: { searchParams: Sea
   const { page } = parseListParams(await searchParams);
   const [account, byStream, totals, { list, total }] = await Promise.all([
     getCoachConnectAccount(coach.id),
-    getEarningsByStream(coach.id),
-    getPayoutTotals(coach.id),
+    getEarningsByStream(coach.id, profile.currency),
+    getPayoutTotals(coach.id, profile.currency),
     listEarnings(coach.id, page),
   ]);
   const money = (n: number, currency = profile.currency) => formatMoney(n, currency);

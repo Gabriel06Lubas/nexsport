@@ -357,6 +357,14 @@ try {
   const high = (await one(`SELECT count(*)::int AS n FROM "PracticeSession" WHERE id LIKE 'demoopen%' AND "minLevel" = 5.0`)).n;
   check(high > 0 && (await a6.getByText("Level 5.0–6.0").count()) === 0, "matches outside the player's level (3.5) are hidden by default");
   check((await matchCard(a6, m1).innerText()).includes("2/4 slots filled"), "a match shows 2/4 slots filled");
+  // A suspended coach's matches leave the board (like their booking page), and come back on reactivation.
+  const { coachId: m1Coach } = await one(`SELECT "coachId" FROM "PracticeSession" WHERE id = $1`, [m1.id]);
+  await db.query(`UPDATE "User" SET "suspendedAt" = now() WHERE id = $1`, [m1Coach]);
+  await a6.reload();
+  check((await matchCard(a6, m1).count()) === 0, "a suspended coach's open match is hidden from the board");
+  await db.query(`UPDATE "User" SET "suspendedAt" = NULL WHERE id = $1`, [m1Coach]);
+  await a6.reload();
+  check(await matchCard(a6, m1).isVisible(), "…and shown again once the coach is reactivated");
 
   await matchCard(a6, m1).getByRole("button", { name: "Join & pay €9.00" }).click();
   await a6.waitForURL((u) => u.href.startsWith(STRIPE), { timeout: 15_000 });

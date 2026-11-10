@@ -64,7 +64,8 @@ export async function getSessionsToWrapUp(coachId: string) {
   return list.map((s) => ({ ...s, startsAt: new Date(s.startsAt) }));
 }
 
-export async function getCoachKpis(coachId: string, ranges: { weekFrom: Date; weekTo: Date; monthFrom: Date; monthTo: Date }) {
+/** `currency`: the coach's, for the pending-payout total (amounts in other currencies aren't added to it). */
+export async function getCoachKpis(coachId: string, currency: string, ranges: { weekFrom: Date; weekTo: Date; monthFrom: Date; monthTo: Date }) {
   const [k] = await rows<{
     weekHours: number;
     monthHours: number;
@@ -82,9 +83,9 @@ export async function getCoachKpis(coachId: string, ranges: { weekFrom: Date; we
       COALESCE((SELECT sum(tr.amount) FROM "PaymentTransfer" tr
                   JOIN "PaymentTransaction" pt ON pt.id = tr."paymentId"
                   JOIN "StripeAccount" sa ON sa.id = tr."stripeAccountId"
-                 WHERE sa."userId" = ${coachId} AND tr."recipientType" = 'COACH' AND tr.status = 'PENDING'), 0)::float8 AS pending,
+                 WHERE sa."userId" = ${coachId} AND tr."recipientType" = 'COACH' AND tr.status = 'PENDING' AND tr.currency = ${currency}), 0)::float8 AS pending,
       (SELECT count(*)::int FROM "PaymentTransfer" tr JOIN "StripeAccount" sa ON sa.id = tr."stripeAccountId"
-        WHERE sa."userId" = ${coachId} AND tr."recipientType" = 'COACH' AND tr.status = 'PENDING') AS "pendingCount",
+        WHERE sa."userId" = ${coachId} AND tr."recipientType" = 'COACH' AND tr.status = 'PENDING' AND tr.currency = ${currency}) AS "pendingCount",
       (SELECT count(*)::int FROM "Attendance" a JOIN s ON s.id = a."sessionId" WHERE s."startsAt" > now() - interval '90 days') AS marked,
       (SELECT count(*)::int FROM "Attendance" a JOIN s ON s.id = a."sessionId"
         WHERE s."startsAt" > now() - interval '90 days' AND a.status IN ('PRESENT', 'LATE')) AS attended`);

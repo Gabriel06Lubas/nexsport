@@ -1,11 +1,11 @@
 import "server-only";
 
-import { and, desc, eq, inArray, isNotNull, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, ne, sql, type SQL } from "drizzle-orm";
 
 import { db, type Tx } from "@/db";
 import { club, clubMember, facility, practiceSession, sessionParticipant, subscription, subscriptionPlan, user } from "@/db/schema";
 import type { SubscriptionTier } from "@/db/schema/enums";
-import { planFactsFor, type PlanFeature } from "@/config/pricing";
+import { planFacts, planFactsFor, type PlanFeature } from "@/config/pricing";
 
 // What a club or a coach has paid for, checked on the server.
 //
@@ -192,6 +192,34 @@ export async function requireClubFeature(clubId: string, feature: PlanFeature, e
     throw new EntitlementError("FEATURE_NOT_IN_PLAN", `This is part of Club Enterprise. ${ent.planName ?? "Your plan"} doesn't include it.`);
   }
   return ent;
+}
+
+// ---------------------------------------------------------------------------
+// The same rules as SQL, for queries that list many clubs at once
+// ---------------------------------------------------------------------------
+
+/** Club tiers whose plan includes a feature (from plans.json, like hasClubFeature). */
+export const clubTiersWith = (feature: PlanFeature) => planFacts.filter((p) => p.audience === "CLUB" && p.features.includes(feature)).map((p) => p.tier);
+
+/**
+ * `<club>` has an ACTIVE / TRIALING subscription (optionally on a tier with
+ * `feature`): the SQL twin of requireActiveSubscription / hasClubFeature.
+ * `clubId` is an SQL expression such as sql`c.id`.
+ */
+export function clubEntitledSql(clubId: SQL, feature?: PlanFeature): SQL {
+  const tiers = feature ? clubTiersWith(feature) : null;
+  const tierFilter = tiers ? sql` AND sub.tier IN (${sql.join(tiers.length ? tiers.map((t) => sql`${t}`) : [sql`NULL`], sql`, `)})` : sql``;
+  return sql`EXISTS (SELECT 1 FROM "Subscription" sub WHERE sub."clubId" = ${clubId} AND sub.status IN ('ACTIVE', 'TRIALING')${tierFilter})`;
+}
+
+/**
+ * A club athletes can see and book: not deleted, not suspended or archived by
+ * the platform, and entitled (see clubEntitledSql). `alias` is the Club row's
+ * alias in the query, e.g. sql`c`. One definition for every public surface:
+ * court booking, coach booking slots and the open-match board.
+ */
+export function clubOpenToPublicSql(alias: SQL, feature?: PlanFeature): SQL {
+  return sql`(${alias}."deletedAt" IS NULL AND ${alias}.status IN ('ACTIVE', 'PENDING_SETUP') AND ${clubEntitledSql(sql`${alias}.id`, feature)})`;
 }
 
 // ---------------------------------------------------------------------------

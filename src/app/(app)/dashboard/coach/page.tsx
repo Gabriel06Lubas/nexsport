@@ -39,7 +39,7 @@ export default async function CoachSchedulePage({ searchParams }: { searchParams
 
   const clubs = await getCoachClubs(coach.id);
   const [kpis, week, upcoming, wrapUp, options] = await Promise.all([
-    getCoachKpis(coach.id, {
+    getCoachKpis(coach.id, profile.currency, {
       weekFrom: zonedToUtc(thisMonday, 0, tz)!,
       weekTo: zonedToUtc(addDays(thisMonday, 7), 0, tz)!,
       monthFrom: month.from,

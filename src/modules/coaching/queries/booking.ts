@@ -2,6 +2,7 @@ import "server-only";
 
 import { sql } from "drizzle-orm";
 
+import { clubOpenToPublicSql } from "@/lib/entitlements";
 import { rows } from "@/modules/clubs/queries/shared";
 
 import { openSlots, type Interval, type SlotFacility, type SlotWindow } from "../lib/slots";
@@ -47,17 +48,16 @@ export async function getPublicCoach(slug: string) {
 
 /**
  * Open slots for a coach right now. Only windows at clubs where the coach is
- * still an active coach and the club is open for business (not suspended,
- * with an ACTIVE or TRIALING nexport subscription) count.
+ * still an active coach and the club is open to the public
+ * (clubOpenToPublicSql) count.
  */
 export async function getOpenSlots(coach: Pick<PublicCoach, "userId" | "sessionMinutes" | "minNoticeHours" | "maxAdvanceDays">, now = new Date()) {
   const windows = await rows<SlotWindow>(sql`
     SELECT w."clubId", c.timezone AS "timeZone", w."facilityId", w."dayOfWeek", w."startMinute", w."endMinute"
       FROM "CoachAvailability" w
-      JOIN "Club" c ON c.id = w."clubId" AND c."deletedAt" IS NULL AND c.status IN ('ACTIVE', 'PENDING_SETUP')
+      JOIN "Club" c ON c.id = w."clubId"
       JOIN "ClubMember" m ON m."clubId" = w."clubId" AND m."userId" = w."coachId" AND m.role = 'COACH' AND m.status = 'ACTIVE'
-     WHERE w."coachId" = ${coach.userId}
-       AND EXISTS (SELECT 1 FROM "Subscription" sub WHERE sub."clubId" = w."clubId" AND sub.status IN ('ACTIVE', 'TRIALING'))`);
+     WHERE w."coachId" = ${coach.userId} AND ${clubOpenToPublicSql(sql`c`)}`);
   if (windows.length === 0) return [];
   const clubIds = sql.join([...new Set(windows.map((w) => w.clubId))].map((id) => sql`${id}`), sql`, `);
   const until = new Date(now.getTime() + (coach.maxAdvanceDays + 1) * 86_400_000);
