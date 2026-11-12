@@ -24,9 +24,11 @@ Stripe moves the club's part itself, and a refund can reverse it.
 3. In production, add the endpoint `<AUTH_URL>/api/webhooks/stripe` in the
    Stripe dashboard with the events listed in `.env.example` (payments, plus
    `customer.subscription.*` for plans: see [onboarding.md](onboarding.md)).
-4. A club takes online bookings once its `StripeAccount` has
-   `chargesEnabled` and `payoutsEnabled`. Creating Connect accounts and
-   onboarding links isn't built yet; see "Not built yet".
+4. Clubs and coaches connect their Stripe accounts from Billing and
+   Earnings ([connect.md](connect.md)). A club takes online bookings once its
+   account can take charges; seat shares are sent once an account has the
+   transfers capability. Add the Connect webhook endpoint too
+   (`STRIPE_CONNECT_WEBHOOK_SECRET`).
 
 Without keys everything still works, and customers pay at the club.
 
@@ -154,11 +156,6 @@ Seat payments, forged and replayed webhooks are covered too. Unit tests:
 
 ## Not built yet
 
-- **Connect onboarding:** creating Express accounts, account links, and
-  `account.updated` syncing `chargesEnabled` / `payoutsEnabled`. Accounts are
-  seeded for now.
-- **Executing seat transfers:** `transfers.create` for queued `PENDING`
-  transfers, and refund reversals for seats.
 - **Disputes:** `charge.dispute.*` are logged but not acted on.
 - **Online payment elsewhere:** passes, self-booked coaching sessions and the
   clubs' SaaS subscriptions are still paid at the club or not yet billed.

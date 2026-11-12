@@ -137,6 +137,9 @@ const stripeServer = createServer(async (req, res) => {
     intents.set(id, pi);
     return json(200, pi);
   }
+  // PaymentIntents behind Checkout seats (pi_e2e_<checkout id>): looked up for the charge their shares are sent from.
+  const checkoutIntent = url.pathname.match(/^\/v1\/payment_intents\/(pi_e2e_(cs_e2e_\d+))$/);
+  if (req.method === "GET" && checkoutIntent) return json(200, { id: checkoutIntent[1], object: "payment_intent", status: "succeeded", latest_charge: `ch_e2e_${checkoutIntent[2]}` });
   const intentPath = url.pathname.match(/^\/v1\/payment_intents\/(pi_e2e_\d+)(\/cancel)?$/);
   if (intentPath) {
     const pi = intents.get(intentPath[1]);
@@ -182,6 +185,7 @@ const stripeServer = createServer(async (req, res) => {
     setTimeout(() => sendWebhook("checkout.session.expired", { id: cs.id, object: "checkout.session", payment_status: "unpaid", status: "expired", metadata: { paymentId: cs.paymentId } }), 50);
     return json(200, { id: cs.id, object: "checkout.session", status: "expired" });
   }
+  if (req.method === "POST" && url.pathname === "/v1/transfers") return json(200, { id: `tr_e2e_${++seq}`, object: "transfer", amount: Number(form.get("amount")), destination: form.get("destination") });
   if (req.method === "POST" && url.pathname === "/v1/refunds") return json(200, { id: `re_e2e_${++seq}`, object: "refund", amount: Number(form.get("amount")), payment_intent: form.get("payment_intent"), status: "succeeded" });
   if (req.method === "GET" && /^\/v1\/customers\/[^/]+\/payment_methods$/.test(url.pathname)) {
     return json(200, { object: "list", url: url.pathname, has_more: false, data: [{ id: "pm_e2e_visa", object: "payment_method", type: "card", card: { brand: "visa", last4: "4242", exp_month: 12, exp_year: 2030 } }] });
@@ -378,8 +382,9 @@ try {
      WHERE pt."sessionId" = $1 AND pt."payerId" = 'demoathlete06'`, [m1.id]);
   const split = (paid?.transfers ?? []).reduce((n, t) => n + t.amount, 0);
   check(
-    paid?.status === "SUCCEEDED" && paid.seat === "ACCEPTED" && paid.stripePaymentIntentId?.startsWith("pi_e2e_") && paid.transfers?.length === 2 && split === 900 - paid.applicationFeeAmount,
-    `the webhook settles the seat and queues the club and coach transfers (${JSON.stringify(paid?.transfers)})`,
+    paid?.status === "SUCCEEDED" && paid.seat === "ACCEPTED" && paid.stripePaymentIntentId?.startsWith("pi_e2e_") && paid.transfers?.length === 2 && split === 900 - paid.applicationFeeAmount &&
+      paid.transfers.every((t) => t.status === "PAID"),
+    `the webhook settles the seat and sends the club's and coach's shares through Stripe (${JSON.stringify(paid?.transfers)})`,
   );
 
   // Abandoned checkout: the seat is held, then released.

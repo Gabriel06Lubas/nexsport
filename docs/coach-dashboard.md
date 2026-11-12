@@ -117,8 +117,9 @@ SQL tests cover the new guards (`tests/db/coach_guards.test.sql`).
 
 ## Not wired up yet
 
-- **Stripe:** online payment for self-bookings and Connect onboarding links
-  (Step 4). Earnings are read from the database.
+- **Stripe:** coaches connect their payout account on Earnings
+  ([connect.md](connect.md)); online payment for self-booked private
+  sessions isn't built yet (they're paid at the club).
 - **Club coaches without the COACH role:** club employees whose platform role
   is STAFF (e.g. the seeded "Pablo Ruiz") appear in the club's payroll but
   don't get this dashboard.

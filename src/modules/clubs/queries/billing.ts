@@ -1,17 +1,10 @@
 import "server-only";
 
-import { eq, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 
-import { db } from "@/db";
-import { stripeAccount } from "@/db/schema";
 import { PAGE_SIZE } from "@/lib/list-params";
 
 import { rows, type ClubRef } from "./shared";
-
-export async function getConnectAccount(clubId: string) {
-  const [account] = await db.select().from(stripeAccount).where(eq(stripeAccount.clubId, clubId));
-  return account ?? null;
-}
 
 /** Last 30 days of online payments: what customers paid and where it went. */
 export async function getMoneyFlow(club: ClubRef) {

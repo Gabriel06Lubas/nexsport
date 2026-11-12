@@ -128,9 +128,9 @@ the form parsers (`src/modules/clubs/lib/clubs-lib.test.ts`).
 
 ## Not wired up yet
 
-- **Stripe.** Online payments, transfers and the Connect account are read
-  from the database; creating Connect onboarding links and taking online
-  payments belong to the Stripe integration (Step 4). Desk payments work now.
+- **Stripe Connect** is wired up: the owner connects the club's account on
+  Billing (see [connect.md](connect.md)); until then courts are bookable at
+  the desk only.
 - **Front-desk shifts.** Billable hours come from coached sessions, so staff
   who don't coach show 0 hours; shift tracking isn't modelled.
 - **Invitations.** Adding someone to the roster takes effect immediately for

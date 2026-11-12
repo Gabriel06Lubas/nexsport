@@ -350,7 +350,7 @@ try {
 
   // 7. Billing ----------------------------------------------------------------------
   await owner.goto(`${APP}${CLUB}/billing`);
-  check(await owner.getByText("Charges enabled:").isVisible() && (await owner.getByText("Nothing outstanding").isVisible()), "Connect card shows charges / payouts enabled");
+  check(await owner.getByText("Charges enabled:").isVisible() && (await owner.getByText("All set. Stripe can take payments").isVisible()), "Connect card shows charges / payouts enabled");
   await owner.getByRole("link", { name: "Memberships", exact: true }).click();
   await owner.waitForURL((u) => u.searchParams.get("kind") === "MEMBERSHIP");
   check(await said(owner, "Transaction history (2)"), "transactions filter to the 2 online membership payments");

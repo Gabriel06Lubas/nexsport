@@ -131,6 +131,8 @@ export const stripeAccount = pgTable(
     defaultCurrency: char({ length: 3 }).notNull(),
     chargesEnabled: boolean().notNull().default(false),
     payoutsEnabled: boolean().notNull().default(false),
+    /** Stripe's `transfers` capability is active: seat shares can be sent to this account. */
+    transfersEnabled: boolean().notNull().default(false),
     detailsSubmitted: boolean().notNull().default(false),
     /** Mirrors `account.requirements.currently_due` from Stripe webhooks. */
     requirementsDue: text()
@@ -285,6 +287,8 @@ export const paymentTransfer = pgTable(
     /** tr_... */
     stripeTransferId: text(),
     reversedAmount: integer().notNull().default(0),
+    /** Why Stripe refused the transfer (status FAILED). */
+    failureMessage: text(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

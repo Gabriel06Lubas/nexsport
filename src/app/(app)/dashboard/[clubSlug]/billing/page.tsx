@@ -1,8 +1,8 @@
-import { CircleCheck, CircleX, Landmark, Percent, Receipt, Undo2 } from "lucide-react";
+import { Landmark, Percent, Receipt, Undo2 } from "lucide-react";
 import type { Metadata, Route } from "next";
 import Link from "next/link";
 
-import { ConnectBadge, EmptyState, formatDate, KpiCard, PageHeader, Pagination, Panel, StatusBadge, TableWrap, td, th } from "@/components/dashboard/ui";
+import { EmptyState, formatDate, KpiCard, PageHeader, Pagination, Panel, StatusBadge, TableWrap, td, th } from "@/components/dashboard/ui";
 import { ActionButton } from "@/components/forms/action-form";
 import { Badge } from "@/components/ui/badge";
 import { planCurrency, planFactsFor } from "@/config/pricing";
@@ -10,7 +10,11 @@ import { parseListParams, pickParam } from "@/lib/list-params";
 import { cn, formatMoney } from "@/lib/utils";
 import { getClubPlan, requireClubSection } from "@/modules/clubs/dal";
 import { openClubBillingPortal, startClubSubscriptionCheckout } from "@/modules/onboarding/actions";
-import { getConnectAccount, getMoneyFlow, listTransactions, TX_KINDS, type TxKind } from "@/modules/clubs/queries/billing";
+import { ConnectPanel } from "@/modules/payments/components/connect-panel";
+import { loadConnectAccount, pendingSharesFor } from "@/modules/payments/connect";
+import { openClubStripeDashboard, startClubConnect } from "@/modules/payments/connect-actions";
+import { getStripe } from "@/modules/payments/stripe";
+import { getMoneyFlow, listTransactions, TX_KINDS, type TxKind } from "@/modules/clubs/queries/billing";
 
 export const metadata: Metadata = { title: "Billing & Stripe Connect" };
 
@@ -27,17 +31,6 @@ const planStatusLabels: Record<string, string> = {
   PAUSED: "Paused",
 };
 
-function Check({ ok, label }: { ok: boolean; label: string }) {
-  return (
-    <li className="flex items-center gap-2 text-sm">
-      {ok ? <CircleCheck className="size-4 text-success" aria-hidden /> : <CircleX className="size-4 text-danger" aria-hidden />}
-      <span>
-        {label}: <span className="font-medium">{ok ? "yes" : "no"}</span>
-      </span>
-    </li>
-  );
-}
-
 export default async function BillingPage({ params, searchParams }: { params: Promise<{ clubSlug: string }>; searchParams: SearchParams }) {
   const { clubSlug } = await params;
   const access = await requireClubSection(clubSlug, "billing");
@@ -45,12 +38,15 @@ export default async function BillingPage({ params, searchParams }: { params: Pr
   const sp = await searchParams;
   const kind = pickParam(sp.kind, TX_KINDS, "all");
   const { page } = parseListParams(sp);
+  const stripe = getStripe();
+  const stripeEnabled = stripe !== null;
   const [plan, account, flow, { txs, total }] = await Promise.all([
     getClubPlan(club.id),
-    getConnectAccount(club.id),
+    loadConnectAccount(stripe, { kind: "club", clubId: club.id, slug: club.slug, name: club.name, country: club.country, email: access.user.email }, { justReturned: sp.connect === "return" }),
     getMoneyFlow(club),
     listTransactions(club.id, { kind, page }),
   ]);
+  const waiting = account ? await pendingSharesFor(account.id) : null;
   // A subscription that can still be managed in Stripe's portal, vs one that's over and needs a new Checkout.
   const live = plan.status !== null && plan.status !== "CANCELED" && plan.status !== "INCOMPLETE_EXPIRED";
   const owner = access.role === "OWNER";
@@ -103,51 +99,19 @@ export default async function BillingPage({ params, searchParams }: { params: Pr
         </div>
       </Panel>
 
-      <Panel title="Stripe Connect account" action={<ConnectBadge status={account?.status ?? null} chargesEnabled={account?.chargesEnabled ?? null} payoutsEnabled={account?.payoutsEnabled ?? null} />}>
-        {!account ? (
-          <div className="space-y-3 p-5 text-sm">
-            <p>No Stripe account is connected yet, so customers can only pay at the desk.</p>
-            <p className="text-muted-foreground">
-              Connecting creates a Stripe Express account for {club.name}: Stripe verifies your business and bank details, then online payments for bookings, sessions and
-              memberships are split automatically between you, your coaches and nexport&apos;s platform fee.
-            </p>
-            <button type="button" disabled className="h-9 rounded-full bg-ink px-4 text-sm font-semibold text-ink-foreground opacity-50">
-              Connect with Stripe
-            </button>
-            <p className="text-xs text-muted-foreground">Onboarding links are issued by the Stripe Connect integration, which isn&apos;t enabled on this deployment yet.</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 gap-6 p-5 md:grid-cols-2">
-            <div className="space-y-3">
-              <ul className="space-y-2">
-                <Check ok={account.chargesEnabled} label="Charges enabled" />
-                <Check ok={account.payoutsEnabled} label="Payouts enabled" />
-                <Check ok={account.detailsSubmitted} label="Details submitted" />
-              </ul>
-              <p className="text-xs text-muted-foreground">
-                <span className="font-mono">{account.stripeAccountId}</span> · {account.type.toLowerCase()} · {account.country} · payouts in{" "}
-                {account.defaultCurrency.toUpperCase()} · updated {formatDate(account.updatedAt, club.timezone)}
-              </p>
-            </div>
-            <div className="min-w-0 space-y-2 text-sm">
-              {account.requirementsDue.length === 0 && !account.disabledReason ? (
-                <p className="text-success">Nothing outstanding. Stripe can charge customers and pay out to your bank.</p>
-              ) : (
-                <>
-                  <p className="font-medium text-danger">Stripe needs more information</p>
-                  {account.disabledReason && <p className="text-xs text-muted-foreground">Reason: {account.disabledReason}</p>}
-                  <ul className="list-inside list-disc text-xs">
-                    {account.requirementsDue.map((r) => (
-                      <li key={r} className="break-all font-mono">{r}</li>
-                    ))}
-                  </ul>
-                  <p className="text-xs text-muted-foreground">Finish onboarding in Stripe to restore payouts.</p>
-                </>
-              )}
-            </div>
-          </div>
-        )}
-      </Panel>
+      <ConnectPanel
+        account={account}
+        canManage={owner && !access.readOnly}
+        enabled={stripeEnabled}
+        hidden={{ clubSlug: club.slug }}
+        start={startClubConnect}
+        dashboard={openClubStripeDashboard}
+        who={club.name}
+        purpose="Until it is, customers can only pay at the desk: courts can't be booked online and session seats can't be paid online."
+        waiting={waiting ? { ...waiting, currency: club.currency } : undefined}
+        notice={typeof sp.connect === "string" ? sp.connect : undefined}
+        timeZone={club.timezone}
+      />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard label="Paid online, last 30 days" icon={<Receipt className="size-4" aria-hidden />} value={money(flow.gross)} hint={`${flow.payments} payments`} />

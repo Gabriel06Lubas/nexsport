@@ -1,9 +1,13 @@
+import { eq } from "drizzle-orm";
 import { Wrench } from "lucide-react";
-import type { Metadata } from "next";
+import type { Metadata, Route } from "next";
+import Link from "next/link";
 
 import { EmptyState, formatDate, PageHeader, Panel, TableWrap, td, th } from "@/components/dashboard/ui";
 import { ActionButton, ActionForm, CheckboxField, CheckboxGroup, Field, FormFooter, SelectField } from "@/components/forms/action-form";
 import { Badge } from "@/components/ui/badge";
+import { db } from "@/db";
+import { stripeAccount } from "@/db/schema";
 import { centsToInput } from "@/lib/money-input";
 import { formatMoney } from "@/lib/utils";
 import {
@@ -36,11 +40,14 @@ export default async function FacilitiesPage({ params }: { params: Promise<{ clu
   const access = await requireClubSection(clubSlug, "facilities");
   const manageFacilities = can(access, "MANAGE_FACILITIES") && !access.readOnly;
   const manageEquipment = can(access, "MANAGE_EQUIPMENT") && !access.readOnly;
-  const [facilities, equipment, maintenance] = await Promise.all([
+  const [facilities, equipment, maintenance, [connect]] = await Promise.all([
     listFacilities(access.club.id),
     listEquipment(access.club.id),
     listMaintenance(access.club.id),
+    db.select({ chargesEnabled: stripeAccount.chargesEnabled }).from(stripeAccount).where(eq(stripeAccount.clubId, access.club.id)),
   ]);
+  // Online court booking needs the club's Stripe account to take charges (see Billing).
+  const onlineBooking = connect?.chargesEnabled === true;
 
   return (
     <div className="space-y-8">
@@ -53,6 +60,21 @@ export default async function FacilitiesPage({ params }: { params: Promise<{ clu
         <h2 id="facilities-heading" className="text-lg font-semibold">
           Courts & pitches
         </h2>
+        {!onlineBooking && facilities.length > 0 && (
+          <p role="status" className="rounded-2xl border border-border bg-card px-4 py-3 text-sm">
+            Courts are bookable at the desk only.{" "}
+            {can(access, "MANAGE_BILLING") ? (
+              <>
+                <Link href={`/dashboard/${access.club.slug}/billing` as Route} className="font-medium text-accent-text hover:underline">
+                  Connect Stripe on the Billing page
+                </Link>{" "}
+                so athletes can book and pay online.
+              </>
+            ) : (
+              "Once the club owner connects Stripe, athletes can book and pay online."
+            )}
+          </p>
+        )}
         {facilities.length === 0 && <EmptyState>No facilities yet. Add your first court or pitch below.</EmptyState>}
         {facilities.map((f) => (
           <FacilityCard key={f.id} facility={f} access={access} editable={manageFacilities} />

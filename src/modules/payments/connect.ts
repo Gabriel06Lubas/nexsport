@@ -1,0 +1,299 @@
+import "server-only";
+
+import { and, eq, gt, sql } from "drizzle-orm";
+import type Stripe from "stripe";
+
+import { db } from "@/db";
+import { paymentTransaction, paymentTransfer, stripeAccount } from "@/db/schema";
+
+import { connectStateOf, DISCONNECTED, reversalDue } from "./lib/connect-status";
+import { appUrl } from "./stripe";
+
+// Stripe Connect for clubs and coaches.
+//
+//   * Onboarding: one connected account per club or coach (StripeAccount,
+//     unique per owner), created on first "Connect with Stripe". Stripe hosts
+//     the dashboard (Express-style controller), nexport pays the fees and
+//     bears losses. Owners go through Stripe's hosted onboarding (Account
+//     Links); refresh_url regenerates an expired link, return_url brings them
+//     back to the page, which re-reads the account.
+//   * State: account.updated (Connect webhook) and every page view of an
+//     account that isn't fully enabled call syncConnectAccount(), so a missed
+//     webhook only delays the update to the next visit.
+//   * Money: court rentals are destination charges straight to the club
+//     (charges_enabled). Seat payments are separate charges and transfers:
+//     settle.ts queues the club's and coach's shares as PENDING
+//     PaymentTransfers, and sendPendingTransfers() sends them once the
+//     account's transfers capability is active. A refund reverses the same
+//     fraction of each share (reverseTransfersForRefund).
+
+export type ConnectOwner =
+  | { kind: "club"; clubId: string; slug: string; name: string; country: string; email: string }
+  | { kind: "coach"; userId: string; name: string | null; country: string; email: string };
+
+const ownerWhere = (owner: ConnectOwner) => (owner.kind === "club" ? eq(stripeAccount.clubId, owner.clubId) : eq(stripeAccount.userId, owner.userId));
+
+export const connectPaths = (owner: ConnectOwner) =>
+  owner.kind === "club"
+    ? { page: `/dashboard/${owner.slug}/billing`, refresh: `/dashboard/${owner.slug}/billing/connect` }
+    : { page: "/dashboard/coach/earnings", refresh: "/dashboard/coach/earnings/connect" };
+
+export async function getConnectAccountFor(owner: ConnectOwner) {
+  const [row] = await db.select().from(stripeAccount).where(ownerWhere(owner));
+  return row ?? null;
+}
+
+/**
+ * The owner's connected account: the existing one, or a new one created in
+ * Stripe and stored. An account the owner disconnected from nexport in
+ * Stripe can't be reconnected, so it's replaced by a new one (same row, so
+ * the owner keeps one account; past transfers keep their Stripe ids).
+ */
+export async function ensureConnectAccount(stripe: Stripe, owner: ConnectOwner) {
+  const existing = await getConnectAccountFor(owner);
+  if (existing && existing.disabledReason !== DISCONNECTED) return existing;
+  const ownerKey = `${owner.kind === "club" ? `club-${owner.clubId}` : `coach-${owner.userId}`}${existing ? `-after-${existing.stripeAccountId}` : ""}`;
+  // Same idempotency key on a double click or retry: Stripe returns the same account.
+  const account = await stripe.accounts.create(
+    {
+      country: owner.country,
+      email: owner.email,
+      controller: { stripe_dashboard: { type: "express" }, fees: { payer: "application" }, losses: { payments: "application" } },
+      capabilities: { card_payments: { requested: true }, transfers: { requested: true } },
+      ...(owner.kind === "coach" ? { business_type: "individual" as const } : {}),
+      business_profile: { name: owner.kind === "club" ? owner.name : (owner.name ?? undefined), product_description: owner.kind === "club" ? "Court rentals, coached sessions and memberships" : "Coaching sessions" },
+      metadata: owner.kind === "club" ? { clubId: owner.clubId } : { userId: owner.userId },
+    },
+    { idempotencyKey: `connect-account-${ownerKey}` },
+  );
+  const state = connectStateOf(account);
+  if (existing) {
+    await db
+      .update(stripeAccount)
+      .set({ stripeAccountId: account.id, country: (account.country ?? owner.country).toUpperCase(), defaultCurrency: (account.default_currency ?? "eur").toLowerCase(), ...state })
+      .where(eq(stripeAccount.id, existing.id));
+    return (await getConnectAccountFor(owner))!;
+  }
+  await db
+    .insert(stripeAccount)
+    .values({
+      ...(owner.kind === "club" ? { clubId: owner.clubId } : { userId: owner.userId }),
+      stripeAccountId: account.id,
+      type: "EXPRESS",
+      country: (account.country ?? owner.country).toUpperCase(),
+      defaultCurrency: (account.default_currency ?? "eur").toLowerCase(),
+      ...state,
+    })
+    .onConflictDoNothing();
+  return (await getConnectAccountFor(owner))!;
+}
+
+/** Stripe-hosted onboarding (also collects anything Stripe asks for later). */
+export async function createOnboardingLink(stripe: Stripe, stripeAccountId: string, owner: ConnectOwner) {
+  const paths = connectPaths(owner);
+  const link = await stripe.accountLinks.create({
+    account: stripeAccountId,
+    type: "account_onboarding",
+    refresh_url: appUrl(paths.refresh),
+    return_url: appUrl(`${paths.page}?connect=return`),
+  });
+  return link.url;
+}
+
+/** One-time link into the account's Stripe dashboard (payouts, bank details, tax forms). */
+export async function createDashboardLink(stripe: Stripe, stripeAccountId: string) {
+  return (await stripe.accounts.createLoginLink(stripeAccountId)).url;
+}
+
+/**
+ * Stores what Stripe says about an account. Returns the account row, or null
+ * if it isn't one of ours. When the transfers capability turns on, the
+ * caller sends the shares that were waiting for it.
+ */
+export async function syncConnectAccount(account: Stripe.Account) {
+  const state = connectStateOf(account);
+  const [row] = await db
+    .update(stripeAccount)
+    .set({ ...state, ...(account.default_currency ? { defaultCurrency: account.default_currency.toLowerCase() } : {}), ...(account.country ? { country: account.country.toUpperCase() } : {}) })
+    .where(eq(stripeAccount.stripeAccountId, account.id))
+    .returning();
+  return row ?? null;
+}
+
+/** Re-reads an account from Stripe (pages call this while setup isn't complete). */
+export async function refreshConnectAccount(stripe: Stripe, stripeAccountId: string) {
+  try {
+    return await syncConnectAccount(await stripe.accounts.retrieve(stripeAccountId));
+  } catch (error) {
+    console.error(`[connect] could not refresh ${stripeAccountId}`, error);
+    return null;
+  }
+}
+
+/** account.application.deauthorized: the owner disconnected nexport from their Stripe account. */
+export async function disconnectConnectAccount(stripeAccountId: string) {
+  await db
+    .update(stripeAccount)
+    .set({ status: "RESTRICTED", chargesEnabled: false, payoutsEnabled: false, transfersEnabled: false, disabledReason: DISCONNECTED })
+    .where(eq(stripeAccount.stripeAccountId, stripeAccountId));
+}
+
+/**
+ * Sends the queued shares of succeeded seat payments to connected accounts
+ * whose transfers capability is active: all of them, or those of one
+ * payment / one account. Each transfer is claimed under a row lock (SKIP
+ * LOCKED, so concurrent webhooks never send it twice), sent with an
+ * idempotency key, and drawn from the original charge (source_transaction),
+ * so it never depends on the platform's available balance.
+ */
+export async function sendPendingTransfers(stripe: Stripe, scope: { paymentId?: string; accountId?: string } = {}) {
+  const candidates = await db
+    .select({ id: paymentTransfer.id })
+    .from(paymentTransfer)
+    .innerJoin(stripeAccount, eq(stripeAccount.id, paymentTransfer.stripeAccountId))
+    .innerJoin(paymentTransaction, eq(paymentTransaction.id, paymentTransfer.paymentId))
+    .where(
+      and(
+        eq(paymentTransfer.status, "PENDING"),
+        gt(paymentTransfer.amount, paymentTransfer.reversedAmount),
+        eq(stripeAccount.transfersEnabled, true),
+        eq(paymentTransaction.status, "SUCCEEDED"),
+        scope.paymentId ? eq(paymentTransfer.paymentId, scope.paymentId) : undefined,
+        scope.accountId ? eq(paymentTransfer.stripeAccountId, scope.accountId) : undefined,
+      ),
+    )
+    .limit(100);
+
+  let sent = 0;
+  for (const { id } of candidates) {
+    const result = await db.transaction(async (tx) => {
+      const [t] = await tx
+        .select({
+          id: paymentTransfer.id,
+          amount: paymentTransfer.amount,
+          reversedAmount: paymentTransfer.reversedAmount,
+          currency: paymentTransfer.currency,
+          recipientType: paymentTransfer.recipientType,
+          destination: stripeAccount.stripeAccountId,
+          paymentId: paymentTransaction.id,
+          chargeId: paymentTransaction.stripeChargeId,
+          intentId: paymentTransaction.stripePaymentIntentId,
+          transferGroup: paymentTransaction.transferGroup,
+        })
+        .from(paymentTransfer)
+        .innerJoin(stripeAccount, eq(stripeAccount.id, paymentTransfer.stripeAccountId))
+        .innerJoin(paymentTransaction, eq(paymentTransaction.id, paymentTransfer.paymentId))
+        .where(and(eq(paymentTransfer.id, id), eq(paymentTransfer.status, "PENDING")))
+        .for("update", { of: paymentTransfer, skipLocked: true });
+      if (!t) return false;
+
+      let chargeId = t.chargeId;
+      if (!chargeId && t.intentId) {
+        // Checkout reports the PaymentIntent, not the charge: look it up once and keep it.
+        try {
+          const intent = await stripe.paymentIntents.retrieve(t.intentId);
+          chargeId = typeof intent.latest_charge === "string" ? intent.latest_charge : (intent.latest_charge?.id ?? null);
+        } catch (error) {
+          console.error(`[connect] transfer ${t.id} postponed: charge of ${t.intentId} unavailable`, error);
+          return false;
+        }
+        if (chargeId) await tx.update(paymentTransaction).set({ stripeChargeId: chargeId }).where(eq(paymentTransaction.id, t.paymentId));
+      }
+      try {
+        const transfer = await stripe.transfers.create(
+          {
+            amount: t.amount - t.reversedAmount,
+            currency: t.currency,
+            destination: t.destination,
+            transfer_group: t.transferGroup,
+            ...(chargeId ? { source_transaction: chargeId } : {}),
+            metadata: { paymentId: t.paymentId, paymentTransferId: t.id, recipientType: t.recipientType },
+          },
+          { idempotencyKey: `transfer-${t.id}` },
+        );
+        await tx.update(paymentTransfer).set({ status: "PAID", stripeTransferId: transfer.id, failureMessage: null }).where(eq(paymentTransfer.id, t.id));
+        return true;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        // Network trouble, rate limits, Stripe outages: leave it PENDING for the next attempt.
+        const type = (error as { type?: string } | null)?.type;
+        if (type === "StripeConnectionError" || type === "StripeRateLimitError" || type === "StripeAPIError") {
+          console.error(`[connect] transfer ${t.id} postponed: ${message}`);
+          return false;
+        }
+        console.error(`[connect] transfer ${t.id} failed: ${message}`);
+        await tx.update(paymentTransfer).set({ status: "FAILED", failureMessage: message.slice(0, 500) }).where(eq(paymentTransfer.id, t.id));
+        return false;
+      }
+    });
+    if (result) sent++;
+  }
+  return sent;
+}
+
+/**
+ * After a refund of a seat payment: take back the same fraction of the club's
+ * and the coach's shares. Shares already sent are reversed in Stripe; shares
+ * still queued are reduced (sent net, or not at all). Safe to run again: it
+ * only reverses what the refunded total calls for beyond what's reversed.
+ */
+export async function reverseTransfersForRefund(stripe: Stripe, paymentId: string) {
+  const [payment] = await db
+    .select({ amount: paymentTransaction.amount, refunded: paymentTransaction.refundedAmount })
+    .from(paymentTransaction)
+    .where(eq(paymentTransaction.id, paymentId));
+  if (!payment || payment.refunded <= 0) return 0;
+  const transfers = await db.select().from(paymentTransfer).where(eq(paymentTransfer.paymentId, paymentId));
+  let reversed = 0;
+  for (const t of transfers) {
+    if (t.status === "FAILED" || t.status === "REVERSED") continue;
+    const due = reversalDue(t, payment.refunded, payment.amount);
+    if (due === 0) continue;
+    const total = t.reversedAmount + due;
+    if (t.status === "PAID" && t.stripeTransferId) {
+      try {
+        await stripe.transfers.createReversal(t.stripeTransferId, { amount: due, metadata: { paymentId } }, { idempotencyKey: `reversal-${t.id}-${total}` });
+      } catch (error) {
+        console.error(`[connect] reversal of ${t.id} failed`, error);
+        continue;
+      }
+    }
+    await db
+      .update(paymentTransfer)
+      .set({ reversedAmount: total, ...(total >= t.amount ? { status: "REVERSED" as const } : {}) })
+      .where(and(eq(paymentTransfer.id, t.id), eq(paymentTransfer.reversedAmount, t.reversedAmount)));
+    reversed += due;
+  }
+  return reversed;
+}
+
+/** Shares still waiting on an account (shown to the owner while setup isn't complete). */
+export async function pendingSharesFor(accountRowId: string) {
+  const [row] = await db
+    .select({ n: sql<number>`count(*)::int`, amount: sql<number>`COALESCE(sum(${paymentTransfer.amount} - ${paymentTransfer.reversedAmount}), 0)::int` })
+    .from(paymentTransfer)
+    .where(and(eq(paymentTransfer.stripeAccountId, accountRowId), eq(paymentTransfer.status, "PENDING")));
+  return row ?? { n: 0, amount: 0 };
+}
+
+/**
+ * The owner's account for a page view. Until it's fully set up (or right
+ * after the owner returns from Stripe), it's re-read from Stripe, so a missed
+ * account.updated webhook only delays the update to the next visit; shares
+ * that were waiting for the account are sent as soon as it can take them.
+ */
+export async function loadConnectAccount(stripe: Stripe | null, owner: ConnectOwner, { justReturned = false } = {}) {
+  let account = await getConnectAccountFor(owner);
+  // A disconnected account can't be read any more; nothing to refresh until a new one is connected.
+  if (!stripe || !account || account.disabledReason === DISCONNECTED) return account;
+  const incomplete = account.status !== "ACTIVE" || !account.transfersEnabled;
+  if (incomplete || justReturned) {
+    const fresh = await refreshConnectAccount(stripe, account.stripeAccountId);
+    if (fresh) account = fresh;
+  }
+  // Shares left waiting (the account just became ready, or an earlier send was postponed) go out now.
+  if (account.transfersEnabled) await sendPendingTransfers(stripe, { accountId: account.id }).catch((error) => console.error("[connect] sending waiting shares failed", error));
+  return account;
+}
+
+export type ConnectAccountRow = NonNullable<Awaited<ReturnType<typeof getConnectAccountFor>>>;

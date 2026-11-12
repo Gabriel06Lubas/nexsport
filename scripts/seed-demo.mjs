@@ -117,9 +117,9 @@ try {
     if (connect) {
       const healthy = connect === "healthy";
       await q(
-        `INSERT INTO "StripeAccount"(id, "clubId", "stripeAccountId", status, country, "defaultCurrency", "chargesEnabled", "payoutsEnabled",
+        `INSERT INTO "StripeAccount"(id, "clubId", "stripeAccountId", status, country, "defaultCurrency", "chargesEnabled", "transfersEnabled", "payoutsEnabled",
            "detailsSubmitted", "requirementsDue", "disabledReason", "updatedAt")
-         VALUES ($1, $2, $3, $4, 'ES', 'eur', $5, $6, $7, $8, $9, now())`,
+         VALUES ($1, $2, $3, $4, 'ES', 'eur', $5, $5, $6, $7, $8, $9, now())`,
         [
           `demoacct${n}`,
           clubId,
@@ -158,8 +158,8 @@ try {
     }
     if (connected) {
       await q(
-        `INSERT INTO "StripeAccount"(id, "userId", "stripeAccountId", status, country, "defaultCurrency", "chargesEnabled", "payoutsEnabled", "detailsSubmitted", "updatedAt")
-         VALUES ($1, $2, $3, 'ACTIVE', 'ES', 'eur', true, true, true, now())`,
+        `INSERT INTO "StripeAccount"(id, "userId", "stripeAccountId", status, country, "defaultCurrency", "chargesEnabled", "transfersEnabled", "payoutsEnabled", "detailsSubmitted", "updatedAt")
+         VALUES ($1, $2, $3, 'ACTIVE', 'ES', 'eur', true, true, true, true, now())`,
         [`demoacctc${n}`, id, `acct_democ${n}`],
       );
     }

@@ -1,12 +1,17 @@
-import { CircleCheck, CircleX, Hourglass, Landmark, Percent, TriangleAlert } from "lucide-react";
+import { Hourglass, Landmark, Percent, TriangleAlert } from "lucide-react";
 import type { Metadata } from "next";
 
-import { ConnectBadge, EmptyState, formatDate, KpiCard, PageHeader, Pagination, Panel, StatusBadge, TableWrap, td, th } from "@/components/dashboard/ui";
+import { EmptyState, formatDate, KpiCard, PageHeader, Pagination, Panel, StatusBadge, TableWrap, td, th } from "@/components/dashboard/ui";
 import { parseListParams } from "@/lib/list-params";
 import { formatMoney } from "@/lib/utils";
 import { kindStyle } from "@/modules/coaching/components/week-timeline";
 import { getCoachProfile, requireCoach } from "@/modules/coaching/dal";
-import { getCoachConnectAccount, getEarningsByStream, getPayoutTotals, listEarnings } from "@/modules/coaching/queries/earnings";
+import { getEarningsByStream, getPayoutTotals, listEarnings } from "@/modules/coaching/queries/earnings";
+import { countryOptions } from "@/modules/onboarding/club-options";
+import { ConnectPanel } from "@/modules/payments/components/connect-panel";
+import { loadConnectAccount, pendingSharesFor } from "@/modules/payments/connect";
+import { openCoachStripeDashboard, startCoachConnect } from "@/modules/payments/connect-actions";
+import { getStripe } from "@/modules/payments/stripe";
 
 export const metadata: Metadata = { title: "Earnings & Stripe Connect" };
 
@@ -18,27 +23,19 @@ const streams = [
   { kind: "OPEN_MATCH", label: "Open match contributions" },
 ] as const;
 
-function Check({ ok, label }: { ok: boolean; label: string }) {
-  return (
-    <li className="flex items-center gap-2 text-sm">
-      {ok ? <CircleCheck className="size-4 text-success" aria-hidden /> : <CircleX className="size-4 text-danger" aria-hidden />}
-      <span>
-        {label}: <span className="font-medium">{ok ? "yes" : "no"}</span>
-      </span>
-    </li>
-  );
-}
-
 export default async function EarningsPage({ searchParams }: { searchParams: SearchParams }) {
   const coach = await requireCoach();
   const profile = await getCoachProfile(coach);
-  const { page } = parseListParams(await searchParams);
+  const sp = await searchParams;
+  const { page } = parseListParams(sp);
+  const stripe = getStripe();
   const [account, byStream, totals, { list, total }] = await Promise.all([
-    getCoachConnectAccount(coach.id),
+    loadConnectAccount(stripe, { kind: "coach", userId: coach.id, name: coach.name ?? null, country: "", email: coach.email }, { justReturned: sp.connect === "return" }),
     getEarningsByStream(coach.id, profile.currency),
     getPayoutTotals(coach.id, profile.currency),
     listEarnings(coach.id, page),
   ]);
+  const waiting = account ? await pendingSharesFor(account.id) : null;
   const money = (n: number, currency = profile.currency) => formatMoney(n, currency);
   const tz = profile.timezone;
 
@@ -46,40 +43,20 @@ export default async function EarningsPage({ searchParams }: { searchParams: Sea
     <div className="space-y-6">
       <PageHeader title="Earnings & Stripe Connect" description="Your share of every paid session, and the transfers Stripe makes to your account." />
 
-      <Panel title="Stripe Connect account" action={<ConnectBadge status={account?.status ?? null} chargesEnabled={account?.chargesEnabled ?? null} payoutsEnabled={account?.payoutsEnabled ?? null} />}>
-        {!account ? (
-          <div className="space-y-3 p-5 text-sm">
-            <p>No Stripe account connected. Your share of session payments can&apos;t be transferred until you connect one.</p>
-            <button type="button" disabled className="h-9 rounded-full bg-ink px-4 text-sm font-semibold text-ink-foreground opacity-50">
-              Connect with Stripe
-            </button>
-            <p className="text-xs text-muted-foreground">Onboarding links are issued by the Stripe Connect integration, which isn&apos;t enabled on this deployment yet.</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 gap-6 p-5 md:grid-cols-2">
-            <ul className="space-y-2">
-              <Check ok={account.chargesEnabled} label="Charges enabled" />
-              <Check ok={account.payoutsEnabled} label="Payouts enabled" />
-              <Check ok={account.detailsSubmitted} label="Details submitted" />
-            </ul>
-            <div className="min-w-0 text-sm">
-              {account.requirementsDue.length === 0 && !account.disabledReason ? (
-                <p className="text-success">Nothing outstanding. Stripe pays your share out to your bank.</p>
-              ) : (
-                <>
-                  <p className="font-medium text-danger">Stripe needs more information</p>
-                  <ul className="list-inside list-disc text-xs">
-                    {account.requirementsDue.map((r) => (
-                      <li key={r} className="break-all font-mono">{r}</li>
-                    ))}
-                  </ul>
-                </>
-              )}
-              <p className="mt-2 font-mono text-xs text-muted-foreground">{account.stripeAccountId}</p>
-            </div>
-          </div>
-        )}
-      </Panel>
+      <ConnectPanel
+        account={account}
+        canManage
+        enabled={stripe !== null}
+        hidden={{}}
+        start={startCoachConnect}
+        dashboard={openCoachStripeDashboard}
+        who="you"
+        purpose="Your share of online session payments is sent to your Stripe account, so connect one to get paid."
+        countries={countryOptions}
+        waiting={waiting ? { ...waiting, currency: profile.currency } : undefined}
+        notice={typeof sp.connect === "string" ? sp.connect : undefined}
+        timeZone={profile.timezone}
+      />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard label="Paid out, last 30 days" icon={<Landmark className="size-4" aria-hidden />} value={money(totals.paid30)} hint="Your transferred share of payments in the last 30 days" />

@@ -1,9 +1,7 @@
 import "server-only";
 
-import { eq, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 
-import { db } from "@/db";
-import { stripeAccount } from "@/db/schema";
 import { PAGE_SIZE } from "@/lib/list-params";
 import { rows } from "@/modules/clubs/queries/shared";
 
@@ -12,10 +10,6 @@ import { rows } from "@/modules/clubs/queries/shared";
 //   PRIVATE → direct private sessions, GROUP → club commissions
 //   (the coach's share of club-run classes), OPEN_MATCH → open matches.
 
-export async function getCoachConnectAccount(userId: string) {
-  const [account] = await db.select().from(stripeAccount).where(eq(stripeAccount.userId, userId));
-  return account ?? null;
-}
 
 export type StreamRow = { kind: "PRIVATE" | "GROUP" | "OPEN_MATCH"; sessions: number; gross: number; share: number; share30: number; pending: number };
 

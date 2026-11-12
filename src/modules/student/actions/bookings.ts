@@ -8,6 +8,7 @@ import { facilityBooking, paymentTransaction, practiceSession, sessionParticipan
 import { formValues, type ActionState } from "@/lib/action-state";
 import { formatMoney } from "@/lib/utils";
 import { computeRefund } from "@/modules/billing/lib/refund-policy";
+import { reverseTransfersForRefund } from "@/modules/payments/connect";
 import { getStripe, refundPayment } from "@/modules/payments/stripe";
 
 import { requireStudent } from "../dal";
@@ -110,6 +111,8 @@ export async function cancelMyBooking(_prev: ActionState, formData: FormData): P
         .update(paymentTransaction)
         .set({ refundStatus: total >= payment.amount ? "REFUNDED" : "PARTIALLY_REFUNDED", refundedAmount: total, refundedAt: sql`now()` })
         .where(eq(paymentTransaction.id, booking.paymentId!));
+      // A seat's shares were sent to the club and coach: take back the refunded fraction.
+      if (booking.kind === "session") await reverseTransfersForRefund(stripe, booking.paymentId!);
       return { ok: `Cancelled. ${amount} (${decision.refundPercent}%) is on its way back to your card.` };
     } catch (error) {
       console.error("[stripe] refund failed", error);

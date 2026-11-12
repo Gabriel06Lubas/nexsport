@@ -12,15 +12,18 @@ import {
   settleIntent,
   type SettleResult,
 } from "@/modules/payments/settle";
+import { disconnectConnectAccount, sendPendingTransfers, syncConnectAccount } from "@/modules/payments/connect";
 import { getStripe, refundPayment } from "@/modules/payments/stripe";
 import { expirePlanCheckout, provisionFromCheckout, syncSubscription } from "@/modules/payments/subscriptions";
 
 // POST /api/webhooks/stripe
 //
 // 1. The signature is verified against the *raw* body (request.text(), never
-//    a re-serialised JSON object) with STRIPE_WEBHOOK_SECRET; anything else
-//    is a 400. Stripe's default 5-minute tolerance rejects replays of old
-//    signed payloads.
+//    a re-serialised JSON object) with STRIPE_WEBHOOK_SECRET, or with
+//    STRIPE_CONNECT_WEBHOOK_SECRET for the Connect endpoint (events from
+//    connected accounts, such as account.updated, are signed by a separate
+//    endpoint in Stripe). Anything else is a 400. Stripe's default 5-minute
+//    tolerance rejects replays of old signed payloads.
 // 2. The event id is recorded in StripeWebhookEvent before handling (the
 //    admin's webhook log). An event already processed is acknowledged and
 //    skipped, so Stripe's retries are harmless; the handlers are idempotent
@@ -29,18 +32,21 @@ import { expirePlanCheckout, provisionFromCheckout, syncSubscription } from "@/m
 //    Stripe retries it (with backoff, for up to 3 days).
 export async function POST(request: NextRequest) {
   const stripe = getStripe();
-  const secret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
-  if (!stripe || !secret) return new Response("Stripe is not configured", { status: 404 });
+  const secrets = [process.env.STRIPE_WEBHOOK_SECRET, process.env.STRIPE_CONNECT_WEBHOOK_SECRET].map((s) => s?.trim()).filter((s): s is string => !!s);
+  if (!stripe || secrets.length === 0) return new Response("Stripe is not configured", { status: 404 });
 
   const signature = request.headers.get("stripe-signature");
   const body = await request.text();
-  let event: Stripe.Event;
-  try {
-    if (!signature) throw new Error("missing signature");
-    event = stripe.webhooks.constructEvent(body, signature, secret);
-  } catch {
-    return new Response("Invalid signature", { status: 400 });
+  let event: Stripe.Event | null = null;
+  for (const secret of signature ? secrets : []) {
+    try {
+      event = stripe.webhooks.constructEvent(body, signature!, secret);
+      break;
+    } catch {
+      // try the other endpoint's secret
+    }
   }
+  if (!event) return new Response("Invalid signature", { status: 400 });
 
   const [existing] = await db.select({ processedAt: stripeWebhookEvent.processedAt }).from(stripeWebhookEvent).where(eq(stripeWebhookEvent.id, event.id));
   if (existing?.processedAt) return Response.json({ received: true, duplicate: true });
@@ -65,12 +71,12 @@ async function handle(stripe: Stripe, event: Stripe.Event) {
     // Money taken. Seats paid through Checkout raise both events; whichever
     // comes first settles the payment, the second changes nothing.
     case "payment_intent.succeeded":
-      return refundIfLate(stripe, await settleIntent(event.data.object));
+      return afterSettle(stripe, event.data.object.metadata?.paymentId, await settleIntent(event.data.object));
     case "checkout.session.completed":
     case "checkout.session.async_payment_succeeded":
       // A plan purchase: verify with Stripe, then provision (club, role, subscription).
       if (event.data.object.mode === "subscription") return provisionFromCheckout(stripe, event.data.object);
-      return refundIfLate(stripe, await settleCheckout(event.data.object));
+      return afterSettle(stripe, event.data.object.metadata?.paymentId ?? event.data.object.client_reference_id, await settleCheckout(event.data.object));
 
     // A declined card: recorded, the hold is kept for a retry until it expires.
     case "payment_intent.payment_failed":
@@ -92,9 +98,34 @@ async function handle(stripe: Stripe, event: Stripe.Event) {
     case "customer.subscription.resumed":
       return syncSubscription(event.data.object);
 
+    // Connect (from the Connect endpoint): an account's onboarding state or
+    // capabilities changed. Turns online court booking and seat payouts on or off.
+    case "account.updated": {
+      const row = await syncConnectAccount(event.data.object);
+      if (row?.transfersEnabled) await sendPendingTransfers(stripe, { accountId: row.id });
+      return;
+    }
+    case "account.application.deauthorized":
+      if (event.account) await disconnectConnectAccount(event.account);
+      return;
+
     default:
       return; // recorded in the log, nothing to do
   }
+}
+
+/**
+ * Settled (now, or by an earlier delivery of the same outcome): send the
+ * seat's shares to the club and the coach, if their accounts can receive
+ * them. A failure here never fails the webhook: the payment is settled, and
+ * the shares stay PENDING for the next attempt (this event's retry, the
+ * account's next update, or the owner's next visit to Billing / Earnings).
+ */
+async function afterSettle(stripe: Stripe, paymentId: string | null | undefined, result: SettleResult) {
+  if ((result === "settled" || result === "already-settled") && paymentId) {
+    await sendPendingTransfers(stripe, { paymentId }).catch((error) => console.error(`[connect] sending shares of ${paymentId} failed`, error));
+  }
+  return refundIfLate(stripe, result);
 }
 
 /** A payment that landed after its hold was released is refunded in full. */
