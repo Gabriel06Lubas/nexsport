@@ -19,7 +19,7 @@ Stripe moves the club's part itself, and a refund can reverse it.
 
 1. Put test-mode keys in `.env`: `STRIPE_SECRET_KEY`,
    `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`.
-2. Locally, run `stripe listen --forward-to localhost:3000/api/webhooks/stripe`
+2. Locally, run `stripe listen --all-snapshot --forward-to localhost:3000/api/webhooks/stripe`
    and copy the `whsec_…` it prints into `STRIPE_WEBHOOK_SECRET`.
 3. In production, add the endpoint `<AUTH_URL>/api/webhooks/stripe` in the
    Stripe dashboard with the events listed in `.env.example` (payments, plus

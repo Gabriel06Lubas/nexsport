@@ -1,15 +1,26 @@
 // What a Stripe Connect account's state means for nexport, from the fields
-// Stripe sends on the Account object (account.updated, or a retrieve).
+// Stripe sends on an Accounts v2 object (GET /v2/core/accounts/:id with
+// configuration.merchant, configuration.recipient and requirements included).
 // Pure, so it's unit tested and shared by the webhook and the pages.
+//
+//   charges    = merchant card_payments capability active (destination charges)
+//   transfers  = recipient stripe_balance.stripe_transfers active (seat shares)
+//   payouts    = stripe_balance.payouts active (merchant or recipient)
+//   requirements due = entries waiting on the owner (currently or past due)
 
 export type ConnectStatus = "ONBOARDING" | "PENDING_VERIFICATION" | "ACTIVE" | "RESTRICTED" | "REJECTED";
 
+type Capability = { status?: string | null; status_details?: { code?: string | null; resolution?: string | null }[] | null } | null | undefined;
+
 export type AccountFacts = {
-  charges_enabled?: boolean | null;
-  payouts_enabled?: boolean | null;
-  details_submitted?: boolean | null;
-  capabilities?: { transfers?: string | null } | null;
-  requirements?: { currently_due?: string[] | null; past_due?: string[] | null; pending_verification?: string[] | null; disabled_reason?: string | null } | null;
+  closed?: boolean | null;
+  configuration?: {
+    merchant?: { capabilities?: { card_payments?: Capability; stripe_balance?: { payouts?: Capability } | null } | null } | null;
+    recipient?: { capabilities?: { stripe_balance?: { payouts?: Capability; stripe_transfers?: Capability } | null } | null } | null;
+  } | null;
+  requirements?: {
+    entries?: { awaiting_action_from?: string | null; description?: string | null; minimum_deadline?: { status?: string | null } | null }[] | null;
+  } | null;
 };
 
 export type ConnectState = {
@@ -22,21 +33,43 @@ export type ConnectState = {
   disabledReason: string | null;
 };
 
-export function connectStateOf(a: AccountFacts): ConnectState {
-  const chargesEnabled = !!a.charges_enabled;
-  const payoutsEnabled = !!a.payouts_enabled;
-  const detailsSubmitted = !!a.details_submitted;
-  const transfersEnabled = a.capabilities?.transfers === "active";
-  const req = a.requirements ?? {};
-  const requirementsDue = [...new Set([...(req.past_due ?? []), ...(req.currently_due ?? [])])].sort();
-  const disabledReason = req.disabled_reason ?? null;
-  const status: ConnectStatus = disabledReason?.startsWith("rejected")
+const due = new Set(["currently_due", "past_due"]);
+
+/**
+ * `submittedBefore`: the stored detailsSubmitted. v2 has no such flag, so it
+ * turns on once nothing is left for the owner, and stays on: requirements
+ * Stripe adds later read as "update details", not as unfinished onboarding.
+ */
+export function connectStateOf(a: AccountFacts, { submittedBefore = false } = {}): ConnectState {
+  const merchant = a.configuration?.merchant?.capabilities;
+  const recipient = a.configuration?.recipient?.capabilities?.stripe_balance;
+  const caps: Capability[] = [merchant?.card_payments, merchant?.stripe_balance?.payouts, recipient?.payouts, recipient?.stripe_transfers];
+
+  const chargesEnabled = merchant?.card_payments?.status === "active";
+  const transfersEnabled = recipient?.stripe_transfers?.status === "active";
+  const payoutsEnabled = merchant?.stripe_balance?.payouts?.status === "active" || recipient?.payouts?.status === "active";
+
+  const entries = a.requirements?.entries ?? [];
+  const requirementsDue = [
+    ...new Set(entries.filter((e) => e.awaiting_action_from !== "stripe" && due.has(e.minimum_deadline?.status ?? "")).map((e) => e.description ?? "").filter(Boolean)),
+  ].sort();
+  // Nothing left for the owner to fill in (Stripe may still be reviewing it).
+  const detailsSubmitted = submittedBefore || requirementsDue.length === 0;
+
+  // A closed account can't be used again, like one that disconnected nexport.
+  if (a.closed) return { status: "RESTRICTED", chargesEnabled: false, payoutsEnabled: false, transfersEnabled: false, detailsSubmitted, requirementsDue, disabledReason: DISCONNECTED };
+
+  const codes = caps.flatMap((c) => c?.status_details ?? []).map((d) => d.code ?? "");
+  const rejected = caps.some((c) => c?.status === "rejected");
+  const disabledReason = rejected ? (codes.find((c) => c.startsWith("rejected")) ?? "rejected") : (codes.find((c) => c && c !== "determining_status") ?? null);
+
+  const status: ConnectStatus = rejected
     ? "REJECTED"
     : chargesEnabled && payoutsEnabled
       ? "ACTIVE"
       : !detailsSubmitted
         ? "ONBOARDING"
-        : requirementsDue.length > 0 || (disabledReason !== null && disabledReason !== "requirements.pending_verification")
+        : requirementsDue.length > 0 || (disabledReason !== null && disabledReason !== "requirements_pending_verification")
           ? "RESTRICTED"
           : "PENDING_VERIFICATION";
   return { status, chargesEnabled, payoutsEnabled, transfersEnabled, detailsSubmitted, requirementsDue, disabledReason };

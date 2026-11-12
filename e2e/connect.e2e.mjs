@@ -3,7 +3,8 @@
 // an expired link, the account.updated webhook on the Connect endpoint
 // (second signing secret), online court booking switching on, the Stripe
 // dashboard link, a seat payment's shares sent to the club at once and to
-// the coach once they finish onboarding (from the original charge), a
+// the coach once they finish onboarding (an Accounts v2 thin event, third
+// signing secret; from the original charge), a
 // partial refund reversing the same fraction of both, and a deauthorized
 // account switching online booking off again.
 //
@@ -60,6 +61,7 @@ async function latestCode(address) {
 const STRIPE = "http://127.0.0.1:12113";
 const WEBHOOK_SECRET = "whsec_e2e_connect_platform";
 const CONNECT_SECRET = "whsec_e2e_connect_accounts";
+const V2_SECRET = "whsec_e2e_connect_thin";
 const signer = new Stripe("sk_test_e2e");
 const accounts = new Map();
 const links = new Map();
@@ -71,25 +73,50 @@ async function sendWebhook(type, object, { secret = WEBHOOK_SECRET, account } = 
   const header = signer.webhooks.generateTestHeaderString({ payload, secret });
   return fetch(`${APP}/api/webhooks/stripe`, { method: "POST", headers: { "content-type": "application/json", "stripe-signature": header }, body: payload });
 }
-const newAccount = (id, country) => ({
-  id,
-  object: "account",
-  country,
-  default_currency: "eur",
-  charges_enabled: false,
-  payouts_enabled: false,
-  details_submitted: false,
-  capabilities: { card_payments: "inactive", transfers: "inactive" },
-  requirements: { currently_due: ["external_account", "tos_acceptance.date"], past_due: [], pending_verification: [], disabled_reason: "requirements.past_due" },
-});
+// Accounts v2 thin event notification: only the account's id; the app reads the rest from the API.
+async function sendThinEvent(type, accountId, { secret = V2_SECRET } = {}) {
+  const payload = JSON.stringify({ id: `evt_conn_${RUN}_${++seq}`, object: "v2.core.event", type, livemode: false, created: new Date().toISOString(), related_object: { id: accountId, type: "v2.core.account", url: `/v2/core/accounts/${accountId}` } });
+  const header = signer.webhooks.generateTestHeaderString({ payload, secret });
+  return fetch(`${APP}/api/webhooks/stripe`, { method: "POST", headers: { "content-type": "application/json", "stripe-signature": header }, body: payload });
+}
+// An Accounts v2 object (merchant + recipient configurations), before or after onboarding.
+const cap = (status) => ({ status, status_details: status === "active" ? [] : [{ code: "requirements_past_due", resolution: "provide_info" }] });
+const due = (description) => ({ awaiting_action_from: "user", description, errors: [], impact: {}, minimum_deadline: { status: "currently_due" }, requested_reasons: [{ code: "routine_onboarding" }] });
+function setCapabilities(account, status) {
+  account.configuration = {
+    merchant: { applied: true, capabilities: { card_payments: cap(status), stripe_balance: { payouts: cap(status) } } },
+    recipient: { applied: true, capabilities: { stripe_balance: { stripe_transfers: cap(status), payouts: cap(status) } } },
+  };
+  account.requirements = { entries: status === "active" ? [] : [due("external_account"), due("tos_acceptance.date")] };
+}
+function newAccount(id, params) {
+  const account = {
+    id,
+    object: "v2.core.account",
+    applied_configurations: ["merchant", "recipient"],
+    created: new Date().toISOString(),
+    livemode: false,
+    dashboard: params.dashboard,
+    display_name: params.display_name,
+    contact_email: params.contact_email,
+    identity: { country: params.identity?.country, entity_type: params.identity?.entity_type },
+    defaults: { currency: "eur", responsibilities: params.defaults?.responsibilities },
+    metadata: params.metadata,
+  };
+  setCapabilities(account, "restricted");
+  return account;
+}
 const stripeServer = createServer(async (req, res) => {
   let body = "";
   for await (const chunk of req) body += chunk;
-  const form = new URLSearchParams(body);
   const url = new URL(req.url, STRIPE);
+  // v1 is form-encoded, v2 is JSON.
+  const v2 = url.pathname.startsWith("/v2/");
+  const form = new URLSearchParams(v2 ? "" : body);
+  const params = v2 && body ? JSON.parse(body) : {};
   const json = (status, data) => (res.writeHead(status, { "content-type": "application/json", "request-id": `req_${++seq}` }), res.end(JSON.stringify(data)));
   const html = (markup) => (res.writeHead(200, { "content-type": "text/html; charset=utf-8" }), res.end(`<!doctype html><title>Mock Stripe</title>${markup}`));
-  calls.push({ method: req.method, path: url.pathname, form: Object.fromEntries(form) });
+  calls.push({ method: req.method, path: url.pathname, form: Object.fromEntries(form), params });
 
   // Stripe-hosted onboarding.
   const onboard = url.pathname.match(/^\/connect\/onboard\/(acct_conn_\d+)\/(\w+)(\/(finish|leave))?$/);
@@ -103,39 +130,42 @@ const stripeServer = createServer(async (req, res) => {
     }
     const account = accounts.get(onboard[1]);
     if (onboard[4] === "finish") {
-      Object.assign(account, {
-        charges_enabled: true,
-        payouts_enabled: true,
-        details_submitted: true,
-        capabilities: { card_payments: "active", transfers: "active" },
-        requirements: { currently_due: [], past_due: [], pending_verification: [], disabled_reason: null },
-      });
-      // Connected-account events come from the Connect endpoint, signed with its own secret.
-      await sendWebhook("account.updated", account, { secret: CONNECT_SECRET, account: account.id });
+      setCapabilities(account, "active");
+      if (account.metadata?.clubId) {
+        // v1 account.updated comes from the Connect endpoint, signed with its own secret (a v1-shaped object: the app re-reads it via v2).
+        await sendWebhook("account.updated", { id: account.id, object: "account" }, { secret: CONNECT_SECRET, account: account.id });
+      } else {
+        // Accounts v2 thin event, from the thin-payload event destination (third secret).
+        await sendThinEvent("v2.core.account[configuration.recipient].capability_status_updated", account.id);
+      }
     }
     return (res.writeHead(303, { location: link.return_url }), res.end());
   }
   const express = url.pathname.match(/^\/express\/(acct_conn_\d+)$/);
   if (express) return html(`<h1>Mock Express dashboard for ${express[1]}</h1>`);
 
+  // Like Stripe now: new platforms can't create v1 accounts.
   if (req.method === "POST" && url.pathname === "/v1/accounts") {
-    const account = newAccount(`acct_conn_${++seq}`, form.get("country"));
-    account.metadata = { clubId: form.get("metadata[clubId]") ?? undefined, userId: form.get("metadata[userId]") ?? undefined };
+    return json(400, { error: { type: "invalid_request_error", message: "Stripe no longer recommends Accounts v1 for new Connect integrations. Create connected accounts with POST /v2/core/accounts instead." } });
+  }
+  if (req.method === "POST" && url.pathname === "/v2/core/accounts") {
+    const account = newAccount(`acct_conn_${++seq}`, params);
     accounts.set(account.id, account);
     return json(200, account);
   }
-  const acct = url.pathname.match(/^\/v1\/accounts\/(acct_[a-z_]*\d+)(\/login_links)?$/);
+  const acct = url.pathname.match(/^\/(v1|v2\/core)\/accounts\/(acct_[a-z_]*\d+)(\/login_links)?$/);
   if (acct) {
-    const account = accounts.get(acct[1]);
+    const account = accounts.get(acct[2]);
     if (!account) return json(404, { error: { type: "invalid_request_error", code: "resource_missing", message: "No such account" } });
     if (account.deauthorized) return json(403, { error: { type: "invalid_request_error", code: "account_invalid", message: "The provided key does not have access to account" } });
-    if (acct[2]) return json(200, { object: "login_link", url: `${STRIPE}/express/${account.id}` });
-    return json(200, account);
+    if (acct[1] === "v1" && acct[3]) return json(200, { object: "login_link", url: `${STRIPE}/express/${account.id}` });
+    if (acct[1] === "v2/core" && !acct[3] && req.method === "GET") return json(200, account);
   }
-  if (req.method === "POST" && url.pathname === "/v1/account_links") {
+  if (req.method === "POST" && url.pathname === "/v2/core/account_links") {
     const id = `link${++seq}`;
-    links.set(id, { return_url: form.get("return_url"), refresh_url: form.get("refresh_url") });
-    return json(200, { object: "account_link", url: `${STRIPE}/connect/onboard/${form.get("account")}/${id}`, expires_at: Math.floor(Date.now() / 1000) + 300 });
+    const onboarding = params.use_case?.account_onboarding ?? {};
+    links.set(id, { return_url: onboarding.return_url, refresh_url: onboarding.refresh_url });
+    return json(200, { object: "v2.core.account_link", account: params.account, url: `${STRIPE}/connect/onboard/${params.account}/${id}`, created: new Date().toISOString(), expires_at: new Date(Date.now() + 300_000).toISOString(), livemode: false, use_case: params.use_case });
   }
   const intent = url.pathname.match(/^\/v1\/payment_intents\/(pi_[\w]+)$/);
   if (req.method === "GET" && intent) return json(200, { id: intent[1], object: "payment_intent", status: "succeeded", latest_charge: `ch_${intent[1].slice(3)}` });
@@ -161,6 +191,7 @@ const app = spawn("npx", ["next", "dev", "-p", "3406"], {
     STRIPE_SECRET_KEY: "sk_test_e2e",
     STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET,
     STRIPE_CONNECT_WEBHOOK_SECRET: CONNECT_SECRET,
+    STRIPE_V2_WEBHOOK_SECRET: V2_SECRET,
     STRIPE_API_BASE: STRIPE,
     NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: "pk_test_e2e",
   },
@@ -235,11 +266,20 @@ try {
   // 2. Connect, leave halfway, resume, expired link --------------------------------
   await owner.getByRole("button", { name: "Connect with Stripe" }).click();
   await owner.waitForURL((u) => u.href.startsWith(`${STRIPE}/connect/onboard/`));
-  const created = calls.find((c) => c.path === "/v1/accounts");
+  const created = calls.find((c) => c.path === "/v2/core/accounts")?.params;
   check(
-    created?.form.country === "ES" && created.form["metadata[clubId]"] === "democlub05" && created.form["controller[stripe_dashboard][type]"] === "express" && created.form["capabilities[transfers][requested]"] === "true",
-    "an Express-style account is created in the club's country, for card payments and transfers",
+    created?.identity?.country === "ES" &&
+      created.metadata?.clubId === "democlub05" &&
+      created.dashboard === "express" &&
+      created.defaults?.responsibilities?.fees_collector === "application" &&
+      created.defaults.responsibilities.losses_collector === "application" &&
+      created.configuration?.merchant?.capabilities?.card_payments?.requested === true &&
+      created.configuration?.recipient?.capabilities?.stripe_balance?.stripe_transfers?.requested === true &&
+      !calls.some((c) => c.path === "/v1/accounts"),
+    "an Accounts v2 account (Express dashboard) is created in the club's country, for card payments and transfers",
   );
+  const linkCall = calls.find((c) => c.path === "/v2/core/account_links")?.params;
+  check(linkCall?.use_case?.type === "account_onboarding" && linkCall.use_case.account_onboarding?.return_url?.endsWith(`${CLUB}/billing?connect=return`), "…and onboarding uses a v2 account link back to Billing");
   const clubAcct = await one(`SELECT "stripeAccountId", status, "chargesEnabled" FROM "StripeAccount" WHERE "clubId" = 'democlub05'`);
   check(clubAcct?.status === "ONBOARDING" && !clubAcct.chargesEnabled, "…stored as ONBOARDING, before Stripe hosts the onboarding");
   await owner.getByRole("button", { name: "Leave for now" }).click();
@@ -275,8 +315,8 @@ try {
   await connectForm.getByLabel("Country you're based in").selectOption("PT");
   await connectForm.getByRole("button", { name: "Connect with Stripe" }).click();
   await coach.waitForURL((u) => u.href.startsWith(`${STRIPE}/connect/onboard/`));
-  const coachCreate = calls.filter((c) => c.path === "/v1/accounts").at(-1);
-  check(coachCreate.form.country === "PT" && coachCreate.form.business_type === "individual" && coachCreate.form["metadata[userId]"] === "democoach03", "a coach's account is individual, in the country they picked");
+  const coachCreate = calls.filter((c) => c.path === "/v2/core/accounts").at(-1).params;
+  check(coachCreate.identity?.country === "PT" && coachCreate.identity.entity_type === "individual" && coachCreate.metadata?.userId === "democoach03", "a coach's account is individual, in the country they picked");
   await coach.getByRole("button", { name: "Leave for now" }).click();
   await coach.waitForURL((u) => u.pathname === "/dashboard/coach/earnings");
 
@@ -320,6 +360,8 @@ try {
   const coachAcct = (await one(`SELECT "stripeAccountId" FROM "StripeAccount" WHERE "userId" = 'democoach03'`)).stripeAccountId;
   const coachSent = calls.filter((c) => c.path === "/v1/transfers" && c.form.destination === coachAcct);
   check(s?.COACH.status === "PAID" && coachSent.length === 1 && Number(coachSent[0].form.amount) === s.COACH.amount, "once the coach finishes, their waiting share is sent (exactly once)");
+  const thin = await one(`SELECT type, "processedAt", error FROM "StripeWebhookEvent" WHERE id LIKE 'evt_conn_${RUN}_%' AND type LIKE 'v2.core.account%' ORDER BY "createdAt" DESC LIMIT 1`);
+  check(thin?.processedAt && !thin.error, "the Accounts v2 thin event (third signing secret) is verified and processed");
 
   // 5. A 50% refund takes back half of each share ------------------------------------
   await athlete.goto(`${APP}/dashboard/student/bookings`);
@@ -348,6 +390,8 @@ try {
   // 7. A forged Connect webhook ------------------------------------------------------------
   const forged = await fetch(`${APP}/api/webhooks/stripe`, { method: "POST", headers: { "content-type": "application/json", "stripe-signature": "t=1,v1=deadbeef" }, body: JSON.stringify({ type: "account.updated" }) });
   check(forged.status === 400, "a Connect webhook without a valid signature is a 400");
+  const forgedThin = await fetch(`${APP}/api/webhooks/stripe`, { method: "POST", headers: { "content-type": "application/json", "stripe-signature": "t=1,v1=deadbeef" }, body: JSON.stringify({ id: "evt_forged", object: "v2.core.event", type: "v2.core.account.closed", related_object: { id: clubAcct.stripeAccountId } }) });
+  check(forgedThin.status === 400, "…and so is a forged thin event");
 
   check(consoleErrors.length === 0, `no browser console errors or warnings${consoleErrors.length ? `:\n  ${[...new Set(consoleErrors)].join("\n  ")}` : ""}`);
 } catch (error) {

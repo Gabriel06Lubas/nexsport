@@ -22,7 +22,7 @@ npm run db:seed && npm run dev
 Sign in as `athlete01@demo.nexport.test` (level 3.5 padel, a monthly membership,
 court rentals and private lessons) or `athlete02@demo.nexport.test` (a 10-session
 punch card with 6 left). To try paying, set test-mode Stripe keys (see
-`.env.example`) and run `stripe listen --forward-to localhost:3000/api/webhooks/stripe`.
+`.env.example`) and run `stripe listen --all-snapshot --forward-to localhost:3000/api/webhooks/stripe`.
 
 ## Access
 

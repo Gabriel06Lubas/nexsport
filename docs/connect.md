@@ -23,11 +23,21 @@ Until then, **Facilities** says courts are desk-only and links to Billing.
 
 1. **Connect with Stripe.** Clubs: the owner only, never staff and never an
    admin impersonating. Coaches: they pick their country first, because
-   Stripe can't change it later. This creates the connected account in
-   Stripe: country, email, `controller` (Stripe dashboard, `fees.payer` and
-   `losses.payments` = application), card payments and transfers. It's
-   stored in `StripeAccount` (one per club or coach) and the owner is sent to
-   Stripe's hosted onboarding (an Account Link).
+   Stripe can't change it later. This creates the connected account with
+   **Accounts v2** (`POST /v2/core/accounts`; Stripe refuses v1 account
+   creation for new Connect platforms):
+   - `identity.country`, `contact_email`, `display_name` (coaches:
+     `entity_type = individual`);
+   - `dashboard = express`; `fees_collector` and `losses_collector` =
+     application;
+   - the **merchant** configuration with `card_payments` (court rentals) and
+     the **recipient** configuration with `stripe_balance.stripe_transfers`
+     (seat shares).
+
+   It's stored in `StripeAccount` (one per club or coach) and the owner is
+   sent to Stripe's hosted onboarding (a v2 Account Link,
+   `use_case.type = account_onboarding`). The account id (`acct_…`) works
+   unchanged with v1 transfers, destination charges and login links.
 2. **Back from Stripe** (`return_url` = the page with `?connect=return`): the
    page re-reads the account from Stripe and shows what's still needed, in
    words (bank account, identity document, …). The button follows the state:
@@ -36,17 +46,22 @@ Until then, **Facilities** says courts are desk-only and links to Billing.
 3. **Expired link** (`refresh_url` = `…/billing/connect` or
    `/dashboard/coach/earnings/connect`): a fresh link is issued. These routes
    only serve the account's owner and never create an account.
-4. **`account.updated`** (Connect webhook) stores the account's state:
-   - charges, payouts and transfers enabled;
-   - details submitted;
-   - requirements due;
+4. **`v2.core.account*` thin events** (or v1 `account.updated` on the Connect
+   endpoint) make the app re-read the account through Accounts v2 and store:
+   - charges enabled (merchant `card_payments` active), transfers enabled
+     (recipient `stripe_transfers` active), payouts enabled
+     (`stripe_balance.payouts` active);
+   - details submitted (nothing left waiting on the owner; once on, it stays
+     on, so later requirements read as "update details");
+   - requirements due (`requirements.entries` awaiting the owner, currently
+     or past due);
    - status (`ONBOARDING`, `PENDING_VERIFICATION`, `ACTIVE`, `RESTRICTED`,
      `REJECTED`; `src/modules/payments/lib/connect-status.ts`).
 
    Until an account is fully set up, every visit to the page also re-reads
    it, so a missed webhook only delays the update.
-5. **`account.application.deauthorized`**: the owner disconnected nexport in
-   Stripe. The account stops taking payments here, and the page offers
+5. **`account.application.deauthorized`** or **`v2.core.account.closed`**:
+   the account can't be used any more. The account stops taking payments here, and the page offers
    *Connect a new Stripe account*, which replaces it. Stripe doesn't let a
    disconnected account be reconnected.
 
@@ -81,13 +96,28 @@ use `reverse_transfer` and `refund_application_fee`.
 ## Setup
 
 1. Turn on Connect in the Stripe dashboard (Settings → Connect).
-2. Add a **Connect** webhook endpoint (`<AUTH_URL>/api/webhooks/stripe`,
-   "Events on connected accounts") with `account.updated` and
-   `account.application.deauthorized`. Put its signing secret in
-   `STRIPE_CONNECT_WEBHOOK_SECRET`. The route accepts either secret.
-3. Locally: `stripe listen --forward-connect-to localhost:3000/api/webhooks/stripe`
-   prints the Connect secret, alongside `--forward-to` for the platform
-   events.
+2. Add an **Accounts v2 event destination** (Workbench → Event
+   destinations; `<AUTH_URL>/api/webhooks/stripe`, "Your account", payload
+   style **Thin**) with:
+   - `v2.core.account.updated`
+   - `v2.core.account.closed`
+   - `v2.core.account[requirements].updated`
+   - `v2.core.account[configuration.merchant].capability_status_updated`
+   - `v2.core.account[configuration.recipient].capability_status_updated`
+
+   Put its signing secret in `STRIPE_V2_WEBHOOK_SECRET`.
+3. Optionally, a **Connect** webhook endpoint (same URL, "Events on connected
+   accounts") with `account.updated` and `account.application.deauthorized`,
+   secret in `STRIPE_CONNECT_WEBHOOK_SECRET`. The route accepts any of the
+   three secrets, and pages re-read unfinished accounts on every visit, so a
+   missed event only delays an update.
+4. Locally, two listeners (thin and snapshot events can't share one):
+   ```bash
+   stripe listen --all-snapshot --forward-to localhost:3000/api/webhooks/stripe
+   stripe listen --all-thin --forward-to localhost:3000/api/webhooks/stripe
+   ```
+   Put the printed `whsec_…` values in `STRIPE_WEBHOOK_SECRET` and
+   `STRIPE_V2_WEBHOOK_SECRET`.
 
 ## Limits
 
@@ -106,20 +136,22 @@ use `reverse_transfer` and `refund_application_fee`.
 DATABASE_URL=postgresql://… npm run test:e2e:connect
 ```
 
-The test runs against a local Stripe mock (accounts, account links, login
-links, transfers, reversals, refunds, and webhooks signed with either
-secret) and checks 28 things:
+The test runs against a local Stripe mock (v2 accounts and account links,
+which refuses v1 account creation like Stripe; login links, transfers,
+reversals, refunds; snapshot webhooks and thin events signed with each
+secret) and checks 31 things:
 - desk-only until connected;
 - the account's parameters;
 - leaving and resuming onboarding, an expired link, a stranger's 404;
-- `account.updated` from the Connect endpoint turning online booking on;
+- `account.updated` from the Connect endpoint turning online booking on, and
+  a v2 thin event doing the same for a coach;
 - the dashboard link;
 - the coach's country;
 - a seat's club share sent at once and the coach's share once they finish
   (exactly once, from the charge);
 - a 50% refund reversing half of each share;
 - deauthorization turning booking off, and connecting a new account;
-- a forged webhook refused.
+- a forged webhook and a forged thin event refused.
 
 The student e2e also checks that both shares of a paid seat are sent.
 `src/modules/payments/lib/connect-status.test.ts` covers the state mapping

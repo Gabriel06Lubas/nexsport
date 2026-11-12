@@ -17,9 +17,14 @@ import { appUrl } from "./stripe";
 //     bears losses. Owners go through Stripe's hosted onboarding (Account
 //     Links); refresh_url regenerates an expired link, return_url brings them
 //     back to the page, which re-reads the account.
-//   * State: account.updated (Connect webhook) and every page view of an
-//     account that isn't fully enabled call syncConnectAccount(), so a missed
-//     webhook only delays the update to the next visit.
+//   * Accounts v2 (POST /v2/core/accounts): a merchant configuration
+//     (card_payments) and a recipient configuration (stripe_transfers). The
+//     account id (acct_…) works unchanged with v1 transfers, destination
+//     charges and login links.
+//   * State: v2.core.account* thin events, account.updated (Connect webhook)
+//     and every page view of an account that isn't fully enabled re-read the
+//     account (refreshConnectAccount), so a missed webhook only delays the
+//     update to the next visit.
 //   * Money: court rentals are destination charges straight to the club
 //     (charges_enabled). Seat payments are separate charges and transfers:
 //     settle.ts queues the club's and coach's shares as PENDING
@@ -54,23 +59,35 @@ export async function ensureConnectAccount(stripe: Stripe, owner: ConnectOwner) 
   if (existing && existing.disabledReason !== DISCONNECTED) return existing;
   const ownerKey = `${owner.kind === "club" ? `club-${owner.clubId}` : `coach-${owner.userId}`}${existing ? `-after-${existing.stripeAccountId}` : ""}`;
   // Same idempotency key on a double click or retry: Stripe returns the same account.
-  const account = await stripe.accounts.create(
+  // Accounts v2: Stripe no longer lets new Connect platforms create v1 accounts.
+  const account = await stripe.v2.core.accounts.create(
     {
-      country: owner.country,
-      email: owner.email,
-      controller: { stripe_dashboard: { type: "express" }, fees: { payer: "application" }, losses: { payments: "application" } },
-      capabilities: { card_payments: { requested: true }, transfers: { requested: true } },
-      ...(owner.kind === "coach" ? { business_type: "individual" as const } : {}),
-      business_profile: { name: owner.kind === "club" ? owner.name : (owner.name ?? undefined), product_description: owner.kind === "club" ? "Court rentals, coached sessions and memberships" : "Coaching sessions" },
+      display_name: owner.name ?? undefined,
+      contact_email: owner.email,
+      identity: { country: owner.country.toUpperCase(), ...(owner.kind === "coach" ? { entity_type: "individual" as const } : {}) },
+      dashboard: "express",
+      defaults: {
+        responsibilities: { fees_collector: "application", losses_collector: "application" },
+        profile: { product_description: owner.kind === "club" ? "Court rentals, coached sessions and memberships" : "Coaching sessions" },
+      },
+      configuration: {
+        // card_payments: court rentals are destination charges to the club.
+        merchant: { capabilities: { card_payments: { requested: true } } },
+        // stripe_transfers: the club's and coach's shares of seat payments.
+        recipient: { capabilities: { stripe_balance: { stripe_transfers: { requested: true } } } },
+      },
+      include: accountIncludes,
       metadata: owner.kind === "club" ? { clubId: owner.clubId } : { userId: owner.userId },
     },
-    { idempotencyKey: `connect-account-${ownerKey}` },
+    { idempotencyKey: `connect-account-v2-${ownerKey}` },
   );
   const state = connectStateOf(account);
+  const country = (account.identity?.country ?? owner.country).toUpperCase();
+  const defaultCurrency = (account.defaults?.currency ?? "eur").toLowerCase();
   if (existing) {
     await db
       .update(stripeAccount)
-      .set({ stripeAccountId: account.id, country: (account.country ?? owner.country).toUpperCase(), defaultCurrency: (account.default_currency ?? "eur").toLowerCase(), ...state })
+      .set({ stripeAccountId: account.id, country, defaultCurrency, ...state })
       .where(eq(stripeAccount.id, existing.id));
     return (await getConnectAccountFor(owner))!;
   }
@@ -80,22 +97,26 @@ export async function ensureConnectAccount(stripe: Stripe, owner: ConnectOwner) 
       ...(owner.kind === "club" ? { clubId: owner.clubId } : { userId: owner.userId }),
       stripeAccountId: account.id,
       type: "EXPRESS",
-      country: (account.country ?? owner.country).toUpperCase(),
-      defaultCurrency: (account.default_currency ?? "eur").toLowerCase(),
+      country,
+      defaultCurrency,
       ...state,
     })
     .onConflictDoNothing();
   return (await getConnectAccountFor(owner))!;
 }
 
+/** What every create / retrieve asks Stripe to return (v2 objects are sparse by default). */
+const accountIncludes: Stripe.V2.Core.AccountRetrieveParams.Include[] = ["configuration.merchant", "configuration.recipient", "defaults", "identity", "requirements"];
+
 /** Stripe-hosted onboarding (also collects anything Stripe asks for later). */
 export async function createOnboardingLink(stripe: Stripe, stripeAccountId: string, owner: ConnectOwner) {
   const paths = connectPaths(owner);
-  const link = await stripe.accountLinks.create({
+  const link = await stripe.v2.core.accountLinks.create({
     account: stripeAccountId,
-    type: "account_onboarding",
-    refresh_url: appUrl(paths.refresh),
-    return_url: appUrl(`${paths.page}?connect=return`),
+    use_case: {
+      type: "account_onboarding",
+      account_onboarding: { refresh_url: appUrl(paths.refresh), return_url: appUrl(`${paths.page}?connect=return`) },
+    },
   });
   return link.url;
 }
@@ -110,27 +131,49 @@ export async function createDashboardLink(stripe: Stripe, stripeAccountId: strin
  * if it isn't one of ours. When the transfers capability turns on, the
  * caller sends the shares that were waiting for it.
  */
-export async function syncConnectAccount(account: Stripe.Account) {
-  const state = connectStateOf(account);
+export async function syncConnectAccount(account: Stripe.V2.Core.Account) {
+  const [stored] = await db.select({ detailsSubmitted: stripeAccount.detailsSubmitted }).from(stripeAccount).where(eq(stripeAccount.stripeAccountId, account.id));
+  if (!stored) return null;
+  const state = connectStateOf(account, { submittedBefore: stored.detailsSubmitted });
+  const currency = account.defaults?.currency;
+  const country = account.identity?.country;
   const [row] = await db
     .update(stripeAccount)
-    .set({ ...state, ...(account.default_currency ? { defaultCurrency: account.default_currency.toLowerCase() } : {}), ...(account.country ? { country: account.country.toUpperCase() } : {}) })
+    .set({
+      ...state,
+      ...(currency ? { defaultCurrency: currency.toLowerCase() } : {}),
+      ...(country ? { country: country.toUpperCase() } : {}),
+    })
     .where(eq(stripeAccount.stripeAccountId, account.id))
     .returning();
   return row ?? null;
 }
 
 /** Re-reads an account from Stripe (pages call this while setup isn't complete). */
-export async function refreshConnectAccount(stripe: Stripe, stripeAccountId: string) {
+export async function refreshConnectAccount(stripe: Stripe, stripeAccountId: string, { throwOnError = false } = {}) {
   try {
-    return await syncConnectAccount(await stripe.accounts.retrieve(stripeAccountId));
+    return await syncConnectAccount(await stripe.v2.core.accounts.retrieve(stripeAccountId, { include: accountIncludes }));
   } catch (error) {
+    if (throwOnError) throw error;
     console.error(`[connect] could not refresh ${stripeAccountId}`, error);
     return null;
   }
 }
 
-/** account.application.deauthorized: the owner disconnected nexport from their Stripe account. */
+/**
+ * Webhooks: an account changed in Stripe. Only accounts nexport stores, and
+ * not disconnected ones (Stripe refuses to read those), are re-read; a failed
+ * read throws, so the webhook answers 500 and Stripe retries it.
+ */
+export async function connectAccountChanged(stripe: Stripe, stripeAccountId: string) {
+  const [known] = await db.select({ disabledReason: stripeAccount.disabledReason }).from(stripeAccount).where(eq(stripeAccount.stripeAccountId, stripeAccountId));
+  if (!known || known.disabledReason === DISCONNECTED) return null;
+  const row = await refreshConnectAccount(stripe, stripeAccountId, { throwOnError: true });
+  if (row?.transfersEnabled) await sendPendingTransfers(stripe, { accountId: row.id });
+  return row;
+}
+
+/** account.application.deauthorized / v2.core.account.closed: the account can't be used here any more. */
 export async function disconnectConnectAccount(stripeAccountId: string) {
   await db
     .update(stripeAccount)

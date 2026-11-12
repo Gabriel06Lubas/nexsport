@@ -2,26 +2,54 @@ import { describe, expect, it } from "vitest";
 
 import { connectNextStep, connectStateOf, reversalDue } from "./connect-status";
 
+// Accounts v2 objects, trimmed to what connectStateOf reads.
+const cap = (status: string, code?: string) => ({ status, status_details: code ? [{ code, resolution: "provide_info" }] : [] });
+const account = (o: { charges?: string; payouts?: string; transfers?: string; due?: string[]; pastDue?: string[]; reviewing?: string[]; code?: string; closed?: boolean } = {}) => ({
+  closed: o.closed,
+  configuration: {
+    merchant: { capabilities: { card_payments: cap(o.charges ?? "restricted", o.code), stripe_balance: { payouts: cap(o.payouts ?? "restricted", o.code) } } },
+    recipient: { capabilities: { stripe_balance: { stripe_transfers: cap(o.transfers ?? "restricted", o.code) } } },
+  },
+  requirements: {
+    entries: [
+      ...(o.due ?? []).map((d) => ({ awaiting_action_from: "user", description: d, minimum_deadline: { status: "currently_due" } })),
+      ...(o.pastDue ?? []).map((d) => ({ awaiting_action_from: "user", description: d, minimum_deadline: { status: "past_due" } })),
+      ...(o.reviewing ?? []).map((d) => ({ awaiting_action_from: "stripe", description: d, minimum_deadline: { status: "currently_due" } })),
+    ],
+  },
+});
+
 describe("connectStateOf", () => {
-  it("is ONBOARDING until details are submitted", () => {
-    expect(connectStateOf({ details_submitted: false, requirements: { currently_due: ["external_account"] } })).toMatchObject({ status: "ONBOARDING", chargesEnabled: false, requirementsDue: ["external_account"] });
+  it("is ONBOARDING while the owner still has details to give", () => {
+    expect(connectStateOf(account({ due: ["external_account"], code: "requirements_past_due" }))).toMatchObject({ status: "ONBOARDING", chargesEnabled: false, detailsSubmitted: false, requirementsDue: ["external_account"] });
   });
-  it("is ACTIVE when charges and payouts are on", () => {
-    expect(connectStateOf({ charges_enabled: true, payouts_enabled: true, details_submitted: true, capabilities: { transfers: "active" } })).toMatchObject({ status: "ACTIVE", transfersEnabled: true });
+  it("is ACTIVE when card payments and payouts are active", () => {
+    expect(connectStateOf(account({ charges: "active", payouts: "active", transfers: "active" }))).toMatchObject({ status: "ACTIVE", chargesEnabled: true, payoutsEnabled: true, transfersEnabled: true, detailsSubmitted: true });
   });
   it("is PENDING_VERIFICATION while Stripe reviews submitted details", () => {
-    expect(connectStateOf({ details_submitted: true, requirements: { currently_due: [], pending_verification: ["individual.id_number"], disabled_reason: "requirements.pending_verification" } }).status).toBe("PENDING_VERIFICATION");
+    expect(connectStateOf(account({ charges: "pending", payouts: "pending", transfers: "pending", reviewing: ["individual.id_number"], code: "requirements_pending_verification" })).status).toBe("PENDING_VERIFICATION");
   });
   it("is RESTRICTED when Stripe needs more (past due first, no duplicates)", () => {
-    const s = connectStateOf({ charges_enabled: true, payouts_enabled: false, details_submitted: true, requirements: { past_due: ["external_account"], currently_due: ["external_account", "individual.verification.document"] } });
+    const s = connectStateOf(account({ charges: "active", transfers: "active", pastDue: ["external_account"], due: ["external_account", "individual.verification.document"] }), { submittedBefore: true });
     expect(s.status).toBe("RESTRICTED");
     expect(s.requirementsDue).toEqual(["external_account", "individual.verification.document"]);
   });
-  it("is REJECTED when Stripe rejected the account", () => {
-    expect(connectStateOf({ details_submitted: true, requirements: { disabled_reason: "rejected.fraud" } }).status).toBe("REJECTED");
+  it("is REJECTED when Stripe rejected a capability", () => {
+    expect(connectStateOf(account({ charges: "rejected", code: "rejected_fraud" }))).toMatchObject({ status: "REJECTED", disabledReason: "rejected_fraud" });
+  });
+  it("treats a closed account like a disconnected one", () => {
+    expect(connectStateOf(account({ charges: "active", payouts: "active", transfers: "active", closed: true }))).toMatchObject({ disabledReason: "platform_disconnected", chargesEnabled: false, transfersEnabled: false });
+  });
+  it("keeps details submitted once they were, so new requirements mean 'update'", () => {
+    const due = account({ due: ["external_account"] });
+    expect(connectStateOf(due).detailsSubmitted).toBe(false);
+    expect(connectStateOf(due, { submittedBefore: true })).toMatchObject({ detailsSubmitted: true, status: "RESTRICTED" });
   });
   it("only counts an active transfers capability", () => {
-    expect(connectStateOf({ capabilities: { transfers: "pending" } }).transfersEnabled).toBe(false);
+    expect(connectStateOf(account({ transfers: "pending" })).transfersEnabled).toBe(false);
+  });
+  it("reads a sparse account (nothing included) as not set up", () => {
+    expect(connectStateOf({})).toMatchObject({ chargesEnabled: false, payoutsEnabled: false, transfersEnabled: false });
   });
 });
 
