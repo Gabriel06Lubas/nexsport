@@ -9,7 +9,7 @@ import { assertNotImpersonating, requireOnboardedUser } from "@/modules/auth/dal
 import { requireClubAccess } from "@/modules/clubs/dal";
 import { countryOptions } from "@/modules/onboarding/club-options";
 
-import { createDashboardLink, createOnboardingLink, ensureConnectAccount, getConnectAccountFor, type ConnectOwner } from "./connect";
+import { createDashboardLink, getConnectAccountFor, needsSandbox, onboardingLinkFor, type ConnectOwner } from "./connect";
 import { DISCONNECTED } from "./lib/connect-status";
 import { getStripe } from "./stripe";
 
@@ -25,6 +25,9 @@ function stripeFailure(error: unknown, what: string): ActionState {
   console.error(`[connect] ${what} failed`, error);
   if (e?.type === "StripeInvalidRequestError" && e.param === "country") {
     return { error: "Stripe can't open accounts in that country yet. Pick another country, or contact support." };
+  }
+  if (needsSandbox(error)) {
+    return { error: "Stripe test mode can't onboard connected accounts. Use the secret key of a Stripe sandbox instead (see docs/connect.md)." };
   }
   return { error: "Stripe is unavailable right now. Try again in a moment." };
 }
@@ -45,8 +48,7 @@ export async function startClubConnect(_prev: ActionState, formData: FormData): 
   if (!stripe) return notEnabled;
   let url: string;
   try {
-    const account = await ensureConnectAccount(stripe, owner);
-    url = await createOnboardingLink(stripe, account.stripeAccountId, owner);
+    url = await onboardingLinkFor(stripe, owner);
   } catch (error) {
     return stripeFailure(error, "club onboarding");
   }
@@ -88,8 +90,7 @@ export async function startCoachConnect(_prev: ActionState, formData: FormData):
   }
   let url: string;
   try {
-    const account = existing ?? (await ensureConnectAccount(stripe, owner));
-    url = await createOnboardingLink(stripe, account.stripeAccountId, owner);
+    url = await onboardingLinkFor(stripe, owner);
   } catch (error) {
     return stripeFailure(error, "coach onboarding");
   }

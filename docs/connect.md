@@ -95,6 +95,15 @@ use `reverse_transfer` and `refund_application_fee`.
 
 ## Setup
 
+0. **Test in a Stripe sandbox, not legacy test mode.** Stripe refuses
+   hosted onboarding of Accounts v2 accounts with card payments under
+   test-mode keys ("Cannot create a v2 account link … in testmode. Please
+   switch to an account created in a sandbox"). Create one from the account
+   picker (top left) → Sandboxes, and use its `sk_test_…` / `pk_test_…`
+   keys, its webhook secrets, and its Prices (`STRIPE_PRICE_*`): ids from
+   test mode don't exist in a sandbox. A stored connected account the
+   current key can't see is replaced by a new one on the next "Connect"
+   click; customers are re-created the same way.
 1. Turn on Connect in the Stripe dashboard (Settings → Connect).
 2. Add an **Accounts v2 event destination** (Workbench → Event
    destinations; `<AUTH_URL>/api/webhooks/stripe`, "Your account", payload
@@ -139,7 +148,7 @@ DATABASE_URL=postgresql://… npm run test:e2e:connect
 The test runs against a local Stripe mock (v2 accounts and account links,
 which refuses v1 account creation like Stripe; login links, transfers,
 reversals, refunds; snapshot webhooks and thin events signed with each
-secret) and checks 31 things:
+secret) and checks 33 things:
 - desk-only until connected;
 - the account's parameters;
 - leaving and resuming onboarding, an expired link, a stranger's 404;
@@ -151,6 +160,8 @@ secret) and checks 31 things:
   (exactly once, from the charge);
 - a 50% refund reversing half of each share;
 - deauthorization turning booking off, and connecting a new account;
+- the sandbox message for a test-mode refusal, and an account the key can't
+  see replaced on the next click;
 - a forged webhook and a forged thin event refused.
 
 The student e2e also checks that both shares of a paid seat are sent.

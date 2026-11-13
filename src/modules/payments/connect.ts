@@ -121,6 +121,45 @@ export async function createOnboardingLink(stripe: Stripe, stripeAccountId: stri
   return link.url;
 }
 
+/**
+ * Stripe doesn't know the stored account: 404, or 403 (it belongs to another
+ * platform or environment). Typical cause: the secret key was switched, e.g.
+ * from test mode to a sandbox, or the row came from the demo seed.
+ */
+function isUnknownAccount(error: unknown): boolean {
+  const status = (error as { statusCode?: number } | null)?.statusCode;
+  return status === 404 || status === 403;
+}
+
+/**
+ * "Connect with Stripe" / "Continue setup": the owner's account (created if
+ * needed) and a fresh onboarding link. A stored account the current key
+ * can't see is set aside (marked disconnected) and replaced by a new one,
+ * instead of failing on every click.
+ */
+export async function onboardingLinkFor(stripe: Stripe, owner: ConnectOwner) {
+  const account = await ensureConnectAccount(stripe, owner);
+  try {
+    return await createOnboardingLink(stripe, account.stripeAccountId, owner);
+  } catch (error) {
+    const unknown = await stripe.v2.core.accounts.retrieve(account.stripeAccountId).then(
+      () => false,
+      (e: unknown) => isUnknownAccount(e),
+    );
+    if (!unknown) throw error;
+    console.warn(`[connect] ${account.stripeAccountId} isn't visible with the current Stripe key; creating a new account`);
+    await disconnectConnectAccount(account.stripeAccountId);
+    const replacement = await ensureConnectAccount(stripe, { ...owner, country: owner.country || account.country });
+    return createOnboardingLink(stripe, replacement.stripeAccountId, owner);
+  }
+}
+
+/** Stripe refused hosted onboarding because the key is a legacy test-mode key, not a sandbox. */
+export function needsSandbox(error: unknown): boolean {
+  const message = (error as { message?: string } | null)?.message ?? "";
+  return /in testmode/i.test(message) && /sandbox/i.test(message);
+}
+
 /** One-time link into the account's Stripe dashboard (payouts, bank details, tax forms). */
 export async function createDashboardLink(stripe: Stripe, stripeAccountId: string) {
   return (await stripe.accounts.createLoginLink(stripeAccountId)).url;
@@ -155,6 +194,8 @@ export async function refreshConnectAccount(stripe: Stripe, stripeAccountId: str
     return await syncConnectAccount(await stripe.v2.core.accounts.retrieve(stripeAccountId, { include: accountIncludes }));
   } catch (error) {
     if (throwOnError) throw error;
+    // Not visible with this key (switched keys, demo seed): the next "Connect" click replaces it.
+    if (isUnknownAccount(error)) return null;
     console.error(`[connect] could not refresh ${stripeAccountId}`, error);
     return null;
   }

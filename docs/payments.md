@@ -17,7 +17,7 @@ Stripe moves the club's part itself, and a refund can reverse it.
 (SaaS plan Prices have their own command, `npm run stripe:plans`: see
 [admin.md](admin.md#plans).)
 
-1. Put test-mode keys in `.env`: `STRIPE_SECRET_KEY`,
+1. Put a Stripe sandbox's test keys in `.env` (not legacy test mode: Connect onboarding needs a sandbox, see [connect.md](connect.md#setup)): `STRIPE_SECRET_KEY`,
    `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`.
 2. Locally, run `stripe listen --all-snapshot --forward-to localhost:3000/api/webhooks/stripe`
    and copy the `whsec_…` it prints into `STRIPE_WEBHOOK_SECRET`.

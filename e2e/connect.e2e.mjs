@@ -66,6 +66,7 @@ const signer = new Stripe("sk_test_e2e");
 const accounts = new Map();
 const links = new Map();
 const calls = [];
+let refuseTestmode = false; // the next account link fails like a legacy test-mode key does
 let seq = 0;
 const RUN = Date.now().toString(36); // event ids unique per run: the app ignores ids it has already processed
 async function sendWebhook(type, object, { secret = WEBHOOK_SECRET, account } = {}) {
@@ -162,6 +163,11 @@ const stripeServer = createServer(async (req, res) => {
     if (acct[1] === "v2/core" && !acct[3] && req.method === "GET") return json(200, account);
   }
   if (req.method === "POST" && url.pathname === "/v2/core/account_links") {
+    if (!accounts.has(params.account)) return json(404, { error: { type: "invalid_request_error", code: "resource_missing", message: "No such account" } });
+    if (refuseTestmode) {
+      refuseTestmode = false;
+      return json(400, { error: { code: "invalid_fields", message: `Some fields in the request were invalid: 'account: Cannot create a v2 account link for ${params.account} with recipient config capabilities other than stripe_balance.stripe_transfers requested in testmode. Please switch to an account created in a sandbox to test.'`, invalid_fields: [] } });
+    }
     const id = `link${++seq}`;
     const onboarding = params.use_case?.account_onboarding ?? {};
     links.set(id, { return_url: onboarding.return_url, refresh_url: onboarding.refresh_url });
@@ -386,6 +392,18 @@ try {
   await owner.waitForURL((u) => u.href.startsWith(`${STRIPE}/connect/onboard/`));
   const replaced = await one(`SELECT "stripeAccountId", status, "disabledReason" FROM "StripeAccount" WHERE "clubId" = 'democlub05'`);
   check(replaced.stripeAccountId !== clubAcct.stripeAccountId && replaced.status === "ONBOARDING" && replaced.disabledReason !== "platform_disconnected", "…and connecting again creates a new Stripe account in its place");
+
+  // 6b. The Stripe key changed (test mode -> sandbox): the stored account is unknown there
+  refuseTestmode = true;
+  await owner.goto(`${APP}${CLUB}/billing`);
+  await owner.getByRole("button", { name: "Continue setup in Stripe" }).click();
+  check(await said(owner, "Use the secret key of a Stripe sandbox"), "Stripe refusing onboarding in test mode says to use a sandbox key");
+  accounts.delete(replaced.stripeAccountId);
+  await owner.goto(`${APP}${CLUB}/billing`);
+  await owner.getByRole("button", { name: "Continue setup in Stripe" }).click();
+  await owner.waitForURL((u) => u.href.startsWith(`${STRIPE}/connect/onboard/`));
+  const fresh = await one(`SELECT "stripeAccountId", status, "disabledReason" FROM "StripeAccount" WHERE "clubId" = 'democlub05'`);
+  check(fresh.stripeAccountId !== replaced.stripeAccountId && accounts.has(fresh.stripeAccountId) && fresh.status === "ONBOARDING" && fresh.disabledReason !== "platform_disconnected", "a stored account the Stripe key can't see is replaced by a new one on the next click");
 
   // 7. A forged Connect webhook ------------------------------------------------------------
   const forged = await fetch(`${APP}/api/webhooks/stripe`, { method: "POST", headers: { "content-type": "application/json", "stripe-signature": "t=1,v1=deadbeef" }, body: JSON.stringify({ type: "account.updated" }) });
