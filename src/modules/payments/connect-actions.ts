@@ -110,7 +110,7 @@ async function openDashboard(owner: ConnectOwner): Promise<ActionState> {
   if (!account?.detailsSubmitted) return { error: "Finish setting up your Stripe account first." };
   let url: string;
   try {
-    url = await createDashboardLink(stripe, account.stripeAccountId);
+    url = await createDashboardLink(stripe, account);
   } catch (error) {
     return stripeFailure(error, "dashboard link");
   }

@@ -1,9 +1,10 @@
 # Stripe Connect: club and coach payouts
 
 Clubs and coaches get paid through their own Stripe accounts, connected to
-nexport (Stripe Connect). Stripe hosts the onboarding and the account
-dashboard (Express-style); nexport pays Stripe's fees and is responsible for
-losses (refunds and disputes); nexport's own fee is taken from every payment.
+nexport (Stripe Connect). Stripe hosts the onboarding, and the owner manages
+the account in the full Stripe dashboard. Risk is Stripe-managed (Stripe
+requires it for new platforms): Stripe collects its fees from the account
+and covers negative balances. nexport's own fee is taken from every payment.
 
 ## What connecting unlocks
 
@@ -28,8 +29,9 @@ Until then, **Facilities** says courts are desk-only and links to Billing.
    creation for new Connect platforms):
    - `identity.country`, `contact_email`, `display_name` (coaches:
      `entity_type = individual`);
-   - `dashboard = express`; `fees_collector` and `losses_collector` =
-     application;
+   - `dashboard = full`; `fees_collector` and `losses_collector` = stripe
+     (Stripe answers `account_creation_losses_collector_unavailable` to
+     `application`);
    - the **merchant** configuration with `card_payments` (court rentals) and
      the **recipient** configuration with `stripe_balance.stripe_transfers`
      (seat shares).
@@ -37,7 +39,9 @@ Until then, **Facilities** says courts are desk-only and links to Billing.
    It's stored in `StripeAccount` (one per club or coach) and the owner is
    sent to Stripe's hosted onboarding (a v2 Account Link,
    `use_case.type = account_onboarding`). The account id (`acct_…`) works
-   unchanged with v1 transfers, destination charges and login links.
+   unchanged with v1 transfers and destination charges. "Open Stripe
+   dashboard" sends the owner to dashboard.stripe.com to sign in (accounts
+   stored as `EXPRESS`, from before, still get a one-time login link).
 2. **Back from Stripe** (`return_url` = the page with `?connect=return`): the
    page re-reads the account from Stripe and shows what's still needed, in
    words (bank account, identity document, …). The button follows the state:
@@ -133,8 +137,10 @@ use `reverse_transfer` and `refund_application_fee`.
 - **Shares earned before connecting.** A coach or club without an account
   when a seat is paid has no transfer row, so that share stays with nexport.
   Connecting later doesn't backfill it; it would need an admin decision.
-- **Disputes** (`charge.dispute.*`) are logged but not acted on. With
-  `losses.payments = application`, nexport covers them.
+- **Disputes** (`charge.dispute.*`) are logged but not acted on. Stripe
+  covers losses the connected account can't pay back
+  (`losses_collector = stripe`); for destination charges (court rentals)
+  disputes still debit the platform first, as with any destination charge.
 - **The demo seed's accounts** (`acct_demo…`) don't exist in a real Stripe
   account. With real keys, their queued shares fail as soon as a page tries
   to send them.
@@ -146,7 +152,7 @@ DATABASE_URL=postgresql://… npm run test:e2e:connect
 ```
 
 The test runs against a local Stripe mock (v2 accounts and account links,
-which refuses v1 account creation like Stripe; login links, transfers,
+which refuses v1 account creation like Stripe; transfers,
 reversals, refunds; snapshot webhooks and thin events signed with each
 secret) and checks 33 things:
 - desk-only until connected;
@@ -154,7 +160,7 @@ secret) and checks 33 things:
 - leaving and resuming onboarding, an expired link, a stranger's 404;
 - `account.updated` from the Connect endpoint turning online booking on, and
   a v2 thin event doing the same for a coach;
-- the dashboard link;
+- the dashboard link going to the full Stripe dashboard;
 - the coach's country;
 - a seat's club share sent at once and the coach's share once they finish
   (exactly once, from the charge);

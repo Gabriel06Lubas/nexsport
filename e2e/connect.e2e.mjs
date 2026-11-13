@@ -276,13 +276,13 @@ try {
   check(
     created?.identity?.country === "ES" &&
       created.metadata?.clubId === "democlub05" &&
-      created.dashboard === "express" &&
-      created.defaults?.responsibilities?.fees_collector === "application" &&
-      created.defaults.responsibilities.losses_collector === "application" &&
+      created.dashboard === "full" &&
+      created.defaults?.responsibilities?.fees_collector === "stripe" &&
+      created.defaults.responsibilities.losses_collector === "stripe" &&
       created.configuration?.merchant?.capabilities?.card_payments?.requested === true &&
       created.configuration?.recipient?.capabilities?.stripe_balance?.stripe_transfers?.requested === true &&
       !calls.some((c) => c.path === "/v1/accounts"),
-    "an Accounts v2 account (Express dashboard) is created in the club's country, for card payments and transfers",
+    "an Accounts v2 account (Stripe-managed risk, full dashboard) is created in the club's country, for card payments and transfers",
   );
   const linkCall = calls.find((c) => c.path === "/v2/core/account_links")?.params;
   check(linkCall?.use_case?.type === "account_onboarding" && linkCall.use_case.account_onboarding?.return_url?.endsWith(`${CLUB}/billing?connect=return`), "…and onboarding uses a v2 account link back to Billing");
@@ -310,9 +310,11 @@ try {
   await owner.goto(`${APP}${CLUB}/facilities`);
   check((await owner.getByText("Courts are bookable at the desk only").count()) === 0, "…and Facilities no longer says desk-only");
   await owner.goto(`${APP}${CLUB}/billing`);
+  await owner.context().route("https://dashboard.stripe.com/**", (route) => route.fulfill({ contentType: "text/html", body: "<h1>Mock Stripe dashboard login</h1>" }));
+  const loginLinksBefore = calls.filter((c) => c.path.endsWith("/login_links")).length;
   await owner.getByRole("button", { name: "Open Stripe dashboard" }).click();
-  await owner.waitForURL((u) => u.href === `${STRIPE}/express/${clubAcct.stripeAccountId}`);
-  check(true, "Open Stripe dashboard signs the owner into their Express dashboard");
+  await owner.waitForURL((u) => u.href === "https://dashboard.stripe.com/");
+  check(calls.filter((c) => c.path.endsWith("/login_links")).length === loginLinksBefore, "Open Stripe dashboard takes the owner to the full Stripe dashboard (no Express login link)");
 
   // 4. A coach connects; a seat's shares are sent, the coach's once they finish ------
   const coach = await emailSignIn("coach03@demo.nexport.test");

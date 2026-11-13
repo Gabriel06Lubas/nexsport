@@ -12,9 +12,10 @@ import { appUrl } from "./stripe";
 // Stripe Connect for clubs and coaches.
 //
 //   * Onboarding: one connected account per club or coach (StripeAccount,
-//     unique per owner), created on first "Connect with Stripe". Stripe hosts
-//     the dashboard (Express-style controller), nexport pays the fees and
-//     bears losses. Owners go through Stripe's hosted onboarding (Account
+//     unique per owner), created on first "Connect with Stripe". Stripe-
+//     managed risk (Stripe requires it for new platforms): the owner gets the
+//     full Stripe dashboard, Stripe collects its fees from the account and
+//     covers negative balances. Owners go through Stripe's hosted onboarding (Account
 //     Links); refresh_url regenerates an expired link, return_url brings them
 //     back to the page, which re-reads the account.
 //   * Accounts v2 (POST /v2/core/accounts): a merchant configuration
@@ -65,9 +66,12 @@ export async function ensureConnectAccount(stripe: Stripe, owner: ConnectOwner) 
       display_name: owner.name ?? undefined,
       contact_email: owner.email,
       identity: { country: owner.country.toUpperCase(), ...(owner.kind === "coach" ? { entity_type: "individual" as const } : {}) },
-      dashboard: "express",
+      // Stripe-managed risk: Stripe refuses the platform as losses collector
+      // (account_creation_losses_collector_unavailable). With Stripe covering
+      // losses, Stripe also collects its fees and the owner uses the full dashboard.
+      dashboard: "full",
       defaults: {
-        responsibilities: { fees_collector: "application", losses_collector: "application" },
+        responsibilities: { fees_collector: "stripe", losses_collector: "stripe" },
         profile: { product_description: owner.kind === "club" ? "Court rentals, coached sessions and memberships" : "Coaching sessions" },
       },
       configuration: {
@@ -87,7 +91,7 @@ export async function ensureConnectAccount(stripe: Stripe, owner: ConnectOwner) 
   if (existing) {
     await db
       .update(stripeAccount)
-      .set({ stripeAccountId: account.id, country, defaultCurrency, ...state })
+      .set({ stripeAccountId: account.id, type: "STANDARD", country, defaultCurrency, ...state })
       .where(eq(stripeAccount.id, existing.id));
     return (await getConnectAccountFor(owner))!;
   }
@@ -96,7 +100,7 @@ export async function ensureConnectAccount(stripe: Stripe, owner: ConnectOwner) 
     .values({
       ...(owner.kind === "club" ? { clubId: owner.clubId } : { userId: owner.userId }),
       stripeAccountId: account.id,
-      type: "EXPRESS",
+      type: "STANDARD",
       country,
       defaultCurrency,
       ...state,
@@ -160,9 +164,17 @@ export function needsSandbox(error: unknown): boolean {
   return /in testmode/i.test(message) && /sandbox/i.test(message);
 }
 
-/** One-time link into the account's Stripe dashboard (payouts, bank details, tax forms). */
-export async function createDashboardLink(stripe: Stripe, stripeAccountId: string) {
-  return (await stripe.accounts.createLoginLink(stripeAccountId)).url;
+/** The full Stripe dashboard: the owner signs in there with their own Stripe login. */
+export const STRIPE_DASHBOARD_URL = "https://dashboard.stripe.com/";
+
+/**
+ * Where "Open Stripe dashboard" goes (payouts, bank details, tax forms).
+ * Express accounts (created before Stripe-managed risk) get a one-time login
+ * link; full-dashboard accounts can't have one, so they go to Stripe's login.
+ */
+export async function createDashboardLink(stripe: Stripe, account: { stripeAccountId: string; type: string }) {
+  if (account.type !== "EXPRESS") return STRIPE_DASHBOARD_URL;
+  return (await stripe.accounts.createLoginLink(account.stripeAccountId)).url;
 }
 
 /**

@@ -142,7 +142,7 @@ export const subscriptionStatus = pgEnum("SubscriptionStatus", [
   "PAUSED",
 ]);
 
-export const stripeAccountType = pgEnum("StripeAccountType", ["EXPRESS", "CUSTOM"]);
+export const stripeAccountType = pgEnum("StripeAccountType", ["EXPRESS", "CUSTOM", "STANDARD"]);
 
 export const stripeAccountStatus = pgEnum("StripeAccountStatus", [
   "ONBOARDING", // created, KYC not yet submitted
