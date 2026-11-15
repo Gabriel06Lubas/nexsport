@@ -132,6 +132,24 @@ use `reverse_transfer` and `refund_application_fee`.
    Put the printed `whsec_…` values in `STRIPE_WEBHOOK_SECRET` and
    `STRIPE_V2_WEBHOOK_SECRET`.
 
+### When thin events seem to do nothing
+
+The dev server logs every thin event it doesn't act on, with the reason:
+
+- `refused: no configured signing secret matches` (the CLI shows 400): the
+  `--all-thin` listener's `whsec_…` isn't `STRIPE_V2_WEBHOOK_SECRET`, or the
+  dev server wasn't restarted after setting it. Each `stripe listen` prints
+  its own secret, and a new one whenever it restarts without a fixed device.
+- `isn't a connected account nexport stores`: the event names an account
+  nexport didn't create, as Dashboard test events and `stripe trigger` do.
+  Only accounts created through "Connect with Stripe" are updated.
+- `not a connected-account event`: `--all-thin` also forwards thin `v1.*`
+  events; the snapshot listener already delivers those.
+
+To exercise the real path, connect a club in the sandbox and change the
+account (finish or update onboarding); its `v2.core.account*` events then
+update Billing.
+
 ## Limits
 
 - **Shares earned before connecting.** A coach or club without an account

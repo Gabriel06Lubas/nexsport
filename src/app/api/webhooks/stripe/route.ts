@@ -13,6 +13,7 @@ import {
   type SettleResult,
 } from "@/modules/payments/settle";
 import { connectAccountChanged, disconnectConnectAccount, sendPendingTransfers } from "@/modules/payments/connect";
+import { isThinPayload, thinActionFor } from "@/modules/payments/lib/webhook-payload";
 import { getStripe, refundPayment } from "@/modules/payments/stripe";
 import { expirePlanCheckout, provisionFromCheckout, syncSubscription } from "@/modules/payments/subscriptions";
 
@@ -43,7 +44,7 @@ export async function POST(request: NextRequest) {
   // Snapshot events ("event") and thin event notifications ("v2.core.event") are parsed by different SDK calls.
   let thin = false;
   try {
-    thin = (JSON.parse(body) as { object?: unknown } | null)?.object === "v2.core.event";
+    thin = isThinPayload(JSON.parse(body));
   } catch {
     return new Response("Invalid payload", { status: 400 });
   }
@@ -65,7 +66,11 @@ export async function POST(request: NextRequest) {
       // try the other endpoints' secrets
     }
   }
-  if (!event || !run) return new Response("Invalid signature", { status: 400 });
+  if (!event || !run) {
+    // The usual cause locally: the listener's whsec_… isn't in .env (each `stripe listen` prints its own).
+    console.warn(`[stripe webhook] ${thin ? "thin" : "snapshot"} event refused: no configured signing secret matches`);
+    return new Response("Invalid signature", { status: 400 });
+  }
 
   const [existing] = await db.select({ processedAt: stripeWebhookEvent.processedAt }).from(stripeWebhookEvent).where(eq(stripeWebhookEvent.id, event.id));
   if (existing?.processedAt) return Response.json({ received: true, duplicate: true });
@@ -136,12 +141,20 @@ async function handle(stripe: Stripe, event: Stripe.Event) {
  * only the account's id; its current state is read from Stripe.
  */
 async function handleThin(stripe: Stripe, notification: Stripe.V2.Core.EventNotification) {
-  if (!notification.type.startsWith("v2.core.account")) return; // recorded in the log, nothing to do
-  if (notification.type.startsWith("v2.core.account_")) return; // account links, persons
-  const accountId = (notification as { related_object?: { id?: string } | null }).related_object?.id;
-  if (!accountId) return;
-  if (notification.type === "v2.core.account.closed") return disconnectConnectAccount(accountId);
-  await connectAccountChanged(stripe, accountId);
+  const action = thinActionFor(notification as { type: string; related_object?: { id?: string | null } | null });
+  switch (action.kind) {
+    case "ignore":
+      console.info(`[stripe webhook] thin ${notification.type} ${notification.id} ignored: ${action.reason}`);
+      return;
+    case "account-closed":
+      return disconnectConnectAccount(action.accountId);
+    case "account-changed": {
+      const row = await connectAccountChanged(stripe, action.accountId);
+      // Test events from the Dashboard or `stripe trigger` name accounts nexport never created.
+      if (!row) console.info(`[stripe webhook] thin ${notification.type} ${notification.id}: ${action.accountId} isn't a connected account nexport stores (or it was disconnected); nothing to update`);
+      return;
+    }
+  }
 }
 
 /**
