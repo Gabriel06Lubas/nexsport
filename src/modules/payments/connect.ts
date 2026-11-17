@@ -22,8 +22,8 @@ import { appUrl } from "./stripe";
 //     (card_payments) and a recipient configuration (stripe_transfers). The
 //     account id (acct_…) works unchanged with v1 transfers, destination
 //     charges and login links.
-//   * State: v2.core.account* thin events, account.updated (Connect webhook)
-//     and every page view of an account that isn't fully enabled re-read the
+//   * State: account.updated (a snapshot event; its payload is ignored and
+//     the account re-read through v2) and every page view of an account that isn't fully enabled re-read the
 //     account (refreshConnectAccount), so a missed webhook only delays the
 //     update to the next visit.
 //   * Money: court rentals are destination charges straight to the club

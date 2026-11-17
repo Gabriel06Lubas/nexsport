@@ -3,8 +3,8 @@
 // an expired link, the account.updated webhook on the Connect endpoint
 // (second signing secret), online court booking switching on, the Stripe
 // dashboard link, a seat payment's shares sent to the club at once and to
-// the coach once they finish onboarding (an Accounts v2 thin event, third
-// signing secret; from the original charge), a
+// the coach once they finish onboarding (account.updated signed with the
+// platform secret, as one local `stripe listen` does; from the original charge), a
 // partial refund reversing the same fraction of both, and a deauthorized
 // account switching online booking off again.
 //
@@ -61,7 +61,6 @@ async function latestCode(address) {
 const STRIPE = "http://127.0.0.1:12113";
 const WEBHOOK_SECRET = "whsec_e2e_connect_platform";
 const CONNECT_SECRET = "whsec_e2e_connect_accounts";
-const V2_SECRET = "whsec_e2e_connect_thin";
 const signer = new Stripe("sk_test_e2e");
 const accounts = new Map();
 const links = new Map();
@@ -74,8 +73,8 @@ async function sendWebhook(type, object, { secret = WEBHOOK_SECRET, account } = 
   const header = signer.webhooks.generateTestHeaderString({ payload, secret });
   return fetch(`${APP}/api/webhooks/stripe`, { method: "POST", headers: { "content-type": "application/json", "stripe-signature": header }, body: payload });
 }
-// Accounts v2 thin event notification: only the account's id; the app reads the rest from the API.
-async function sendThinEvent(type, accountId, { secret = V2_SECRET } = {}) {
+// A thin event notification: the app uses snapshot events only and refuses these.
+async function sendThinEvent(type, accountId, { secret = WEBHOOK_SECRET } = {}) {
   const payload = JSON.stringify({ id: `evt_conn_${RUN}_${++seq}`, object: "v2.core.event", type, livemode: false, created: new Date().toISOString(), related_object: { id: accountId, type: "v2.core.account", url: `/v2/core/accounts/${accountId}` } });
   const header = signer.webhooks.generateTestHeaderString({ payload, secret });
   return fetch(`${APP}/api/webhooks/stripe`, { method: "POST", headers: { "content-type": "application/json", "stripe-signature": header }, body: payload });
@@ -136,8 +135,8 @@ const stripeServer = createServer(async (req, res) => {
         // v1 account.updated comes from the Connect endpoint, signed with its own secret (a v1-shaped object: the app re-reads it via v2).
         await sendWebhook("account.updated", { id: account.id, object: "account" }, { secret: CONNECT_SECRET, account: account.id });
       } else {
-        // Accounts v2 thin event, from the thin-payload event destination (third secret).
-        await sendThinEvent("v2.core.account[configuration.recipient].capability_status_updated", account.id);
+        // Locally one `stripe listen` signs connected-account events with the platform secret.
+        await sendWebhook("account.updated", { id: account.id, object: "account" }, { account: account.id });
       }
     }
     return (res.writeHead(303, { location: link.return_url }), res.end());
@@ -197,7 +196,6 @@ const app = spawn("npx", ["next", "dev", "-p", "3406"], {
     STRIPE_SECRET_KEY: "sk_test_e2e",
     STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET,
     STRIPE_CONNECT_WEBHOOK_SECRET: CONNECT_SECRET,
-    STRIPE_V2_WEBHOOK_SECRET: V2_SECRET,
     STRIPE_API_BASE: STRIPE,
     NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: "pk_test_e2e",
   },
@@ -368,8 +366,10 @@ try {
   const coachAcct = (await one(`SELECT "stripeAccountId" FROM "StripeAccount" WHERE "userId" = 'democoach03'`)).stripeAccountId;
   const coachSent = calls.filter((c) => c.path === "/v1/transfers" && c.form.destination === coachAcct);
   check(s?.COACH.status === "PAID" && coachSent.length === 1 && Number(coachSent[0].form.amount) === s.COACH.amount, "once the coach finishes, their waiting share is sent (exactly once)");
-  const thin = await one(`SELECT type, "processedAt", error FROM "StripeWebhookEvent" WHERE id LIKE 'evt_conn_${RUN}_%' AND type LIKE 'v2.core.account%' ORDER BY "createdAt" DESC LIMIT 1`);
-  check(thin?.processedAt && !thin.error, "the Accounts v2 thin event (third signing secret) is verified and processed");
+  const coachUpdate = await one(`SELECT "processedAt", error FROM "StripeWebhookEvent" WHERE id LIKE 'evt_conn_${RUN}_%' AND type = 'account.updated' ORDER BY "createdAt" DESC LIMIT 1`);
+  check(coachUpdate?.processedAt && !coachUpdate.error, "account.updated signed with the platform secret (one local listener) is processed too");
+  const thinEvent = await sendThinEvent("v2.core.account.updated", coachAcct);
+  check(thinEvent.status === 400, "a thin event notification is refused, even correctly signed: snapshot events only");
 
   // 5. A 50% refund takes back half of each share ------------------------------------
   await athlete.goto(`${APP}/dashboard/student/bookings`);

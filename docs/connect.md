@@ -50,8 +50,9 @@ Until then, **Facilities** says courts are desk-only and links to Billing.
 3. **Expired link** (`refresh_url` = `…/billing/connect` or
    `/dashboard/coach/earnings/connect`): a fresh link is issued. These routes
    only serve the account's owner and never create an account.
-4. **`v2.core.account*` thin events** (or v1 `account.updated` on the Connect
-   endpoint) make the app re-read the account through Accounts v2 and store:
+4. **`account.updated`** (a snapshot event from the Connect endpoint; its
+   payload is ignored) makes the app re-read the account through Accounts v2
+   and store:
    - charges enabled (merchant `card_payments` active), transfers enabled
      (recipient `stripe_transfers` active), payouts enabled
      (`stripe_balance.payouts` active);
@@ -109,46 +110,36 @@ use `reverse_transfer` and `refund_application_fee`.
    current key can't see is replaced by a new one on the next "Connect"
    click; customers are re-created the same way.
 1. Turn on Connect in the Stripe dashboard (Settings → Connect).
-2. Add an **Accounts v2 event destination** (Workbench → Event
-   destinations; `<AUTH_URL>/api/webhooks/stripe`, "Your account", payload
-   style **Thin**) with:
-   - `v2.core.account.updated`
-   - `v2.core.account.closed`
-   - `v2.core.account[requirements].updated`
-   - `v2.core.account[configuration.merchant].capability_status_updated`
-   - `v2.core.account[configuration.recipient].capability_status_updated`
-
-   Put its signing secret in `STRIPE_V2_WEBHOOK_SECRET`.
-3. Optionally, a **Connect** webhook endpoint (same URL, "Events on connected
-   accounts") with `account.updated` and `account.application.deauthorized`,
-   secret in `STRIPE_CONNECT_WEBHOOK_SECRET`. The route accepts any of the
-   three secrets, and pages re-read unfinished accounts on every visit, so a
-   missed event only delays an update.
-4. Locally, two listeners (thin and snapshot events can't share one):
+2. Add a **Connect** webhook endpoint (`<AUTH_URL>/api/webhooks/stripe`,
+   "Events on connected accounts", snapshot payloads) with
+   `account.updated` and `account.application.deauthorized`. Put its secret
+   in `STRIPE_CONNECT_WEBHOOK_SECRET`. The route accepts it or the platform
+   endpoint's secret, and pages re-read unfinished accounts on every visit,
+   so a missed event only delays an update.
+3. Locally, one listener covers both (it forwards connected accounts' events
+   too, signed with the same secret):
    ```bash
-   stripe listen --all-snapshot --forward-to localhost:3000/api/webhooks/stripe
-   stripe listen --all-thin --forward-to localhost:3000/api/webhooks/stripe
+   stripe listen --forward-to localhost:3000/api/webhooks/stripe
    ```
-   Put the printed `whsec_…` values in `STRIPE_WEBHOOK_SECRET` and
-   `STRIPE_V2_WEBHOOK_SECRET`.
+   Put the printed `whsec_…` in `STRIPE_WEBHOOK_SECRET`.
 
-### When thin events seem to do nothing
+Thin event notifications (`v2.core.account*`) aren't used: the webhook
+answers them with 400. `account.updated` carries the same news, and the app
+re-reads the account from Stripe anyway, which is what thin events are for.
 
-The dev server logs every thin event it doesn't act on, with the reason:
+### When account.updated seems to do nothing
 
-- `refused: no configured signing secret matches` (the CLI shows 400): the
-  `--all-thin` listener's `whsec_…` isn't `STRIPE_V2_WEBHOOK_SECRET`, or the
-  dev server wasn't restarted after setting it. Each `stripe listen` prints
-  its own secret, and a new one whenever it restarts without a fixed device.
+The dev server logs what it did with each `account.updated`:
+
+- `… is now ACTIVE` (or another status): the account was re-read and stored.
 - `isn't a connected account nexport stores`: the event names an account
-  nexport didn't create, as Dashboard test events and `stripe trigger` do.
-  Only accounts created through "Connect with Stripe" are updated.
-- `not a connected-account event`: `--all-thin` also forwards thin `v1.*`
-  events; the snapshot listener already delivers those.
-
-To exercise the real path, connect a club in the sandbox and change the
-account (finish or update onboarding); its `v2.core.account*` events then
-update Billing.
+  nexport didn't create, as `stripe trigger account.updated` and Dashboard
+  test events do. Only accounts created through "Connect with Stripe" are
+  updated, so test with a real sandbox onboarding: connect a club, finish
+  (or leave and resume) Stripe's onboarding, and watch Billing.
+- `event refused: no configured signing secret matches` (the CLI shows
+  400): the listener's `whsec_…` isn't in `.env`, or the dev server wasn't
+  restarted after setting it.
 
 ## Limits
 
@@ -171,13 +162,14 @@ DATABASE_URL=postgresql://… npm run test:e2e:connect
 
 The test runs against a local Stripe mock (v2 accounts and account links,
 which refuses v1 account creation like Stripe; transfers,
-reversals, refunds; snapshot webhooks and thin events signed with each
-secret) and checks 33 things:
+reversals, refunds; snapshot webhooks signed with each secret) and checks
+33 things:
 - desk-only until connected;
 - the account's parameters;
 - leaving and resuming onboarding, an expired link, a stranger's 404;
 - `account.updated` from the Connect endpoint turning online booking on, and
-  a v2 thin event doing the same for a coach;
+  one signed with the platform secret (a single local listener) doing the
+  same for a coach;
 - the dashboard link going to the full Stripe dashboard;
 - the coach's country;
 - a seat's club share sent at once and the coach's share once they finish
@@ -186,7 +178,7 @@ secret) and checks 33 things:
 - deauthorization turning booking off, and connecting a new account;
 - the sandbox message for a test-mode refusal, and an account the key can't
   see replaced on the next click;
-- a forged webhook and a forged thin event refused.
+- thin event notifications refused, and a forged webhook refused.
 
 The student e2e also checks that both shares of a paid seat are sent.
 `src/modules/payments/lib/connect-status.test.ts` covers the state mapping
