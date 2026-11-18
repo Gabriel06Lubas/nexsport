@@ -8,7 +8,7 @@ The old `/dashboard/athlete` link redirects there.
 | `/dashboard/student` | **Overview & upcoming**: session passes, upcoming count, memberships; the next 30 days with Confirmed / Pending / Cancelled, Cancel, Pay now and Get directions |
 | `/dashboard/student/bookings` | **Bookings & passes**: upcoming (with refund countdowns), past and cancelled bookings; the clubs' cancellation rules; passes, purchases, expiry and credit history |
 | `/dashboard/student/open-matches` | **Open match finder**: level-matched open matches with filled slots; join and pay your share through Stripe Checkout |
-| `/dashboard/student/book` | **Book a court**: pick a court and time, pay with Stripe's Payment Element (see [payments.md](payments.md)) |
+| `/dashboard/student/book` | **Book a court**: an availability grid (courts × start times, prices per slot); the chosen slot is held for 15 minutes and paid with Stripe Checkout (see [payments.md](payments.md)) |
 | `/dashboard/student/settings` | **Account & payments**: saved cards and the Stripe customer portal, billing history, playing level per sport, preferred clubs, notification switches |
 
 On phones the sections are a tab bar at the bottom; on large screens, a sidebar.

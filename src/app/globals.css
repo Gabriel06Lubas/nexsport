@@ -26,6 +26,9 @@
   --warning: #b54708;
   --warning-soft: #fef3e6;
   --ring: #5a7d00;
+  --select: #4f46e5; /* indigo: a chosen slot in booking grids */
+  --select-soft: #eef2ff;
+  --select-foreground: #ffffff;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -51,6 +54,9 @@
     --warning: #fdb022;
     --warning-soft: #3a2608;
     --ring: #c8f031;
+    --select: #818cf8;
+    --select-soft: #1e1b4b;
+    --select-foreground: #0a0f1a;
   }
 }
 
@@ -76,6 +82,9 @@
   --warning: #fdb022;
   --warning-soft: #3a2608;
   --ring: #c8f031;
+  --select: #818cf8;
+  --select-soft: #1e1b4b;
+  --select-foreground: #0a0f1a;
 }
 
 @theme inline {
@@ -100,6 +109,9 @@
   --color-warning: var(--warning);
   --color-warning-soft: var(--warning-soft);
   --color-ring: var(--ring);
+  --color-select: var(--select);
+  --color-select-soft: var(--select-soft);
+  --color-select-foreground: var(--select-foreground);
 
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;

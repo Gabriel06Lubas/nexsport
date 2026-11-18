@@ -110,13 +110,23 @@ export async function refundPayment(stripe: Stripe, input: { paymentId: string; 
 export const COURT_HOLD_MINUTES = 15;
 
 /**
- * A PaymentIntent for a court booking, as a destination charge: the customer
+ * Stripe refuses a Checkout Session that expires sooner than 30 minutes after
+ * it's created, so a court's Checkout outlives its 15-minute hold. When the
+ * hold lapses the sweeper expires the session (releaseExpiredHolds), and a
+ * payment that still gets through is refunded in full by the webhook.
+ */
+export const CHECKOUT_MIN_MINUTES = 31;
+
+/**
+ * Stripe Checkout for a court booking, as a destination charge: the customer
  * pays the club's connected account directly (on its behalf, so the club is
  * the merchant of record), and nexport keeps `applicationFee`. Stripe's
  * processing fee comes out of nexport's fee, so the club receives exactly
- * amount − applicationFee.
+ * amount − applicationFee. The payment id is the idempotency key and sits in
+ * the metadata of both the session and its PaymentIntent, which is how the
+ * webhook settles it.
  */
-export async function createCourtPaymentIntent(
+export async function createCourtCheckout(
   stripe: Stripe,
   input: {
     paymentId: string;
@@ -128,25 +138,34 @@ export async function createCourtPaymentIntent(
     applicationFee: number;
     currency: string;
     description: string;
-    receiptEmail: string;
+    successPath: string;
+    cancelPath: string;
   },
 ) {
-  return stripe.paymentIntents.create(
+  const metadata = { paymentId: input.paymentId, facilityBookingId: input.bookingId, clubId: input.clubId };
+  const session = await stripe.checkout.sessions.create(
     {
-      amount: input.amount,
-      currency: input.currency,
+      mode: "payment",
       customer: input.customerId,
-      automatic_payment_methods: { enabled: true },
-      application_fee_amount: input.applicationFee,
-      transfer_data: { destination: input.destination },
-      on_behalf_of: input.destination,
-      transfer_group: `booking_${input.bookingId}`,
-      description: input.description,
-      receipt_email: input.receiptEmail,
-      metadata: { paymentId: input.paymentId, facilityBookingId: input.bookingId, clubId: input.clubId },
+      client_reference_id: input.paymentId,
+      metadata,
+      line_items: [{ quantity: 1, price_data: { currency: input.currency, unit_amount: input.amount, product_data: { name: input.description } } }],
+      payment_intent_data: {
+        application_fee_amount: input.applicationFee,
+        transfer_data: { destination: input.destination },
+        on_behalf_of: input.destination,
+        transfer_group: `booking_${input.bookingId}`,
+        description: input.description,
+        metadata,
+      },
+      expires_at: Math.floor(Date.now() / 1000) + CHECKOUT_MIN_MINUTES * 60,
+      success_url: appUrl(input.successPath),
+      cancel_url: appUrl(input.cancelPath),
     },
-    { idempotencyKey: `pi-${input.paymentId}` },
+    { idempotencyKey: `court-checkout-${input.paymentId}` },
   );
+  if (!session.url) throw new Error("Stripe returned a Checkout Session without a URL");
+  return { id: session.id, url: session.url };
 }
 
 export async function listCards(stripe: Stripe, customerId: string) {

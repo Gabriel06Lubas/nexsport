@@ -1,14 +1,15 @@
-import { and, eq, gt, sql } from "drizzle-orm";
-import type { Metadata } from "next";
+import type { Metadata, Route } from "next";
+import Link from "next/link";
 
 import { PageHeader, Panel } from "@/components/dashboard/ui";
-import { db } from "@/db";
-import { facilityBooking, paymentTransaction } from "@/db/schema";
-import { formatMoney } from "@/lib/utils";
-import { CourtBookingForm } from "@/modules/billing/components/court-booking-form";
-import { PaymentStep } from "@/modules/billing/components/payment-step";
-import { listBookableFacilities } from "@/modules/billing/queries/court-booking";
-import { minuteToTime, zonedParts } from "@/modules/clubs/lib/zoned-time";
+import { cn, formatMoney } from "@/lib/utils";
+import { idSchema } from "@/lib/validation";
+import { CourtScheduleGrid, type GridCellView } from "@/modules/billing/components/court-schedule-grid";
+import { MAX_ADVANCE_DAYS } from "@/modules/billing/lib/court-booking";
+import { buildCourtGrid, GRID_DURATIONS, moneyLocale, parseGridDuration, type GridCell } from "@/modules/billing/lib/court-grid";
+import { getCourtGridData, listBookableClubs } from "@/modules/billing/queries/court-booking";
+import { addDays, zonedParts } from "@/modules/clubs/lib/zoned-time";
+import { releaseExpiredHolds } from "@/modules/payments/settle";
 import { getStripe } from "@/modules/payments/stripe";
 import { requireStudent } from "@/modules/student/dal";
 
@@ -16,81 +17,177 @@ export const metadata: Metadata = { title: "Book a court" };
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
-export default async function BookCourtPage({ searchParams }: { searchParams: SearchParams }) {
-  const student = await requireStudent();
-  const stripe = getStripe();
-  const publishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY?.trim();
-  const resume = (await searchParams).resume;
+const one = (v: string | string[] | undefined) => (typeof v === "string" ? v : undefined);
+const DATE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 
-  if (!stripe || !publishableKey) {
+const unavailableLabel: Record<Extract<GridCell, { state: "unavailable" }>["reason"], string> = {
+  closed: "Closed",
+  past: "No longer bookable",
+  "no-fit": "Not long enough before the next booking or closing",
+  desk: "Book at the front desk",
+};
+
+export default async function BookCourtPage({ searchParams }: { searchParams: SearchParams }) {
+  await requireStudent();
+  const sp = await searchParams;
+
+  if (!getStripe()) {
     return (
       <div className="space-y-6">
         <PageHeader title="Book a court" />
-        <p className="rounded-2xl border border-border bg-card p-5 text-sm text-muted-foreground">Online booking isn&apos;t available on this deployment. Book at the club&apos;s front desk.</p>
+        <p className="rounded-2xl border border-border bg-card p-5 text-sm text-muted-foreground">
+          Online booking isn&apos;t available on this deployment. Book at the club&apos;s front desk.
+        </p>
       </div>
     );
   }
 
-  // Coming back to pay for a court already held.
-  if (typeof resume === "string" && /^[a-z0-9]{1,64}$/.test(resume)) {
-    const [held] = await db
-      .select({ intentId: paymentTransaction.stripePaymentIntentId, amount: paymentTransaction.amount, currency: paymentTransaction.currency, until: paymentTransaction.checkoutExpiresAt, bookingId: facilityBooking.id })
-      .from(paymentTransaction)
-      .innerJoin(facilityBooking, eq(facilityBooking.id, paymentTransaction.facilityBookingId))
-      .where(
-        and(
-          eq(paymentTransaction.id, resume),
-          eq(paymentTransaction.payerId, student.id),
-          eq(paymentTransaction.kind, "COURT_RENTAL"),
-          eq(paymentTransaction.status, "REQUIRES_PAYMENT_METHOD"),
-          gt(paymentTransaction.checkoutExpiresAt, sql`now()`),
-          eq(facilityBooking.status, "PENDING"),
-        ),
-      );
-    const intent = held?.intentId ? await stripe.paymentIntents.retrieve(held.intentId).catch(() => null) : null;
+  // Lapsed holds would otherwise show as booked until something else swept them.
+  await releaseExpiredHolds();
+  const clubs = await listBookableClubs();
+  const requestedClub = one(sp.club);
+  const current = clubs.find((c) => idSchema.safeParse(requestedClub).success && c.clubId === requestedClub) ?? clubs[0];
+
+  if (!current) {
     return (
       <div className="space-y-6">
-        <PageHeader title="Pay for your court" />
-        <Panel title="Payment">
-          <div className="p-5">
-            {held && intent?.client_secret ? (
-              <PaymentStep
-                publishableKey={publishableKey}
-                clientSecret={intent.client_secret}
-                returnPath={`/dashboard/student/bookings?booking=${held.bookingId}`}
-                amountLabel={formatMoney(held.amount, held.currency)}
-                holdExpiresAt={held.until!.toISOString()}
-              />
-            ) : (
-              <p className="text-sm text-muted-foreground">This hold has expired or was already paid. Check your bookings.</p>
-            )}
-          </div>
-        </Panel>
+        <PageHeader title="Book a court" />
+        <p className="rounded-2xl border border-border bg-card p-5 text-sm text-muted-foreground">No club takes online bookings yet.</p>
       </div>
     );
   }
 
-  const facilities = await listBookableFacilities();
-  const today = zonedParts(new Date(), facilities[0]?.timezone ?? "UTC").dateKey;
+  const today = zonedParts(new Date(), current.timezone).dateKey;
+  const last = addDays(today, MAX_ADVANCE_DAYS);
+  const requestedDate = one(sp.date);
+  const date = requestedDate && DATE.test(requestedDate) && requestedDate >= today && requestedDate <= last ? requestedDate : today;
+  const duration = parseGridDuration(one(sp.d));
+
+  const data = await getCourtGridData(current.clubId, date);
+  const locale = moneyLocale(data?.club.country ?? "");
+  const grid = data
+    ? buildCourtGrid({
+        date,
+        timeZone: data.club.timezone,
+        duration,
+        courts: data.courts,
+        busy: data.busy,
+      })
+    : [];
+  const rows = grid.map((r) => ({
+    time: r.time,
+    cells: r.cells.map(
+      (c): GridCellView =>
+        c.state === "available"
+          ? {
+              state: "available",
+              startTime: c.startTime,
+              endTime: c.endTime,
+              priceLabel: formatMoney(c.amount, data!.club.currency, locale),
+            }
+          : c.state === "booked"
+            ? { state: "booked" }
+            : { state: "unavailable", label: unavailableLabel[c.reason] },
+    ),
+  }));
+
+  const href = (over: { club?: string; date?: string; d?: number }) =>
+    `/dashboard/student/book?${new URLSearchParams({ club: over.club ?? current.clubId, date: over.date ?? date, d: String(over.d ?? duration) })}` as Route;
+  const days = Array.from({ length: 7 }, (_, i) => addDays(date <= addDays(today, 3) ? today : addDays(date, -3), i)).filter((d) => d <= last);
+
   return (
     <div className="space-y-6">
-      <PageHeader title="Book a court" description="Pick a court and a time. You pay online and it's yours; the price follows the club's peak and off-peak rates." />
-      <Panel title="Court and time">
-        <div className="p-5">
-          {facilities.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No club takes online bookings yet.</p>
-          ) : (
-            <CourtBookingForm
-              publishableKey={publishableKey}
-              defaultDate={today}
-              facilities={facilities.map((f) => ({
-                facilityId: f.facilityId,
-                label: `${f.clubName} · ${f.facilityName} (${minuteToTime(f.openMinute)}–${minuteToTime(f.closeMinute)}${f.rate !== null ? `, from ${formatMoney(f.rate, f.currency)}/h` : ""})`,
-              }))}
-            />
-          )}
+      <PageHeader
+        title="Book a court"
+        description="Pick a court and a start time. The court is held for 15 minutes while you pay with Stripe; the price follows the club's peak and off-peak rates."
+      />
+
+      {one(sp.checkout) === "cancelled" && (
+        <p role="status" className="rounded-xl border border-border bg-muted/50 px-4 py-3 text-sm">
+          Payment cancelled. The court stays held for a few minutes: pay or release it from{" "}
+          <Link href="/dashboard/student/bookings" className="font-medium underline underline-offset-2">
+            Bookings
+          </Link>
+          .
+        </p>
+      )}
+
+      <Panel
+        title={data?.club.name ?? current.clubName}
+        action={
+          // A plain GET form: works before (and without) JavaScript.
+          <form method="get" aria-label="Club" className="flex items-center gap-2">
+            <input type="hidden" name="date" value={date} />
+            <input type="hidden" name="d" value={duration} />
+            <label className="sr-only" htmlFor="club">
+              Club
+            </label>
+            <select id="club" name="club" defaultValue={current.clubId} className="h-9 max-w-48 rounded-full border border-border bg-background px-3 text-sm">
+              {clubs.map((c) => (
+                <option key={c.clubId} value={c.clubId}>
+                  {c.clubName}
+                  {c.city ? ` · ${c.city}` : ""}
+                </option>
+              ))}
+            </select>
+            <button className="h-9 rounded-full bg-ink px-3 text-xs font-semibold text-ink-foreground">Show</button>
+          </form>
+        }
+      >
+        <div className="space-y-4 p-4 sm:p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <nav aria-label="Day" className="-mx-1 flex gap-1 overflow-x-auto px-1">
+              {days.map((d) => (
+                <Link
+                  key={d}
+                  href={href({ date: d })}
+                  aria-current={d === date ? "date" : undefined}
+                  className={cn(
+                    "flex min-w-14 shrink-0 flex-col items-center whitespace-nowrap rounded-xl border px-2 py-1.5 text-xs transition",
+                    d === date ? "border-ink bg-ink text-ink-foreground" : "border-border bg-background hover:border-foreground/40",
+                  )}
+                >
+                  <span className="font-medium">{dayName(d)}</span>
+                  <span className="tabular-nums">{dayNumber(d)}</span>
+                </Link>
+              ))}
+            </nav>
+            <nav aria-label="Booking length" className="flex rounded-full border border-border bg-background p-0.5 text-xs">
+              {GRID_DURATIONS.map((d) => (
+                <Link
+                  key={d}
+                  href={href({ d })}
+                  aria-current={d === duration ? "true" : undefined}
+                  className={cn("rounded-full px-3 py-1.5 font-medium transition", d === duration ? "bg-ink text-ink-foreground" : "text-muted-foreground hover:text-foreground")}
+                >
+                  {d === 60 ? "1 h" : d === 90 ? "1 h 30" : "2 h"}
+                </Link>
+              ))}
+            </nav>
+          </div>
+
+          <CourtScheduleGrid
+            courts={data?.courts.map((c) => ({ id: c.id, name: c.name })) ?? []}
+            rows={rows}
+            date={date}
+            dateLabel={`${dayName(date)} ${dayNumber(date)}`}
+            duration={duration}
+          />
         </div>
       </Panel>
     </div>
   );
 }
+
+/** "Tue" and "18 Nov" for a local date key (read at noon UTC, so the zone can't shift the day). */
+const weekday = new Intl.DateTimeFormat("en-GB", {
+  weekday: "short",
+  timeZone: "UTC",
+});
+const dayMonth = new Intl.DateTimeFormat("en-GB", {
+  day: "numeric",
+  month: "short",
+  timeZone: "UTC",
+});
+const dayName = (key: string) => weekday.format(new Date(`${key}T12:00:00Z`));
+const dayNumber = (key: string) => dayMonth.format(new Date(`${key}T12:00:00Z`));

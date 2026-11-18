@@ -7,6 +7,8 @@ import { db } from "@/db";
 import { facilityBooking, paymentTransaction, paymentTransfer, practiceSession, sessionParticipant, stripeAccount } from "@/db/schema";
 import { splitSessionPayment } from "@/modules/billing/lib/fee-split";
 
+import { getStripe } from "./stripe";
+
 // What Stripe events do to our rows. Every function is safe to run twice or
 // out of order (Stripe retries webhooks and doesn't guarantee ordering):
 // each UPDATE is conditional on the state it moves from, so the second
@@ -193,7 +195,7 @@ export async function releaseIntentHold(intent: Stripe.PaymentIntent) {
  * slice of all payments.
  */
 export async function releaseExpiredHolds(sessionId?: string) {
-  return db.transaction(async (tx) => {
+  const { released, checkoutIds } = await db.transaction(async (tx) => {
     const rows = await tx
       .update(paymentTransaction)
       .set({ status: sql`CASE WHEN ${paymentTransaction.failureCode} IS NOT NULL THEN 'FAILED'::"PaymentStatus" ELSE 'CANCELED'::"PaymentStatus" END`, checkoutUrl: null })
@@ -205,9 +207,10 @@ export async function releaseExpiredHolds(sessionId?: string) {
           sessionId ? eq(paymentTransaction.sessionId, sessionId) : sql`true`,
         ),
       )
-      .returning({ participantId: paymentTransaction.participantId, facilityBookingId: paymentTransaction.facilityBookingId });
+      .returning({ participantId: paymentTransaction.participantId, facilityBookingId: paymentTransaction.facilityBookingId, checkoutId: paymentTransaction.stripeCheckoutSessionId });
     const released = await releaseHeld(tx, rows);
-    if (sessionId) return released;
+    const checkoutIds = rows.map((r) => r.checkoutId).filter((id): id is string => !!id);
+    if (sessionId) return { released, checkoutIds };
     // Court holds that lapsed with no live payment (it was never written, or
     // was closed without releasing the slot): the booking's own expiry frees
     // the court. Served by FacilityBooking_open_holds_idx.
@@ -223,6 +226,14 @@ export async function releaseExpiredHolds(sessionId?: string) {
         ),
       )
       .returning({ id: facilityBooking.id });
-    return released + orphans.length;
+    return { released: released + orphans.length, checkoutIds };
   });
+  // A court's Checkout outlives its 15-minute hold (Stripe's 30-minute
+  // minimum): close it so the slot can't be paid for after it was released.
+  // Best effort, after the commit; a payment that still lands is refunded.
+  if (checkoutIds.length) {
+    const stripe = getStripe();
+    if (stripe) await Promise.all(checkoutIds.map((id) => stripe.checkout.sessions.expire(id).catch(() => undefined)));
+  }
+  return released;
 }

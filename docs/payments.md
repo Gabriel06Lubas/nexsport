@@ -5,7 +5,7 @@ Stripe Connect. Two flows are live:
 
 | What | How the money moves | Started by |
 | --- | --- | --- |
-| **Court booking** | PaymentIntent, **destination charge**: paid to the club's connected account (`transfer_data.destination`, `on_behalf_of`), with nexport's fee as `application_fee_amount` | `createCourtBookingAction` (student → *Book a court*) |
+| **Court booking** | Checkout Session, **destination charge**: paid to the club's connected account (`payment_intent_data.transfer_data.destination`, `on_behalf_of`), with nexport's fee as `application_fee_amount` | `bookCourt` (student → *Book a court*, the availability grid) |
 | **Open-match seat** | Checkout Session, **separate charges and transfers**: the platform charges, then transfers the club's and the coach's shares (`transfer_group`) | `joinOpenMatch` (student → *Open match finder*) |
 
 Seats need separate charges because one payment is split between a club and
@@ -32,36 +32,55 @@ Stripe moves the club's part itself, and a refund can reverse it.
 
 Without keys everything still works, and customers pay at the club.
 
-## A. `createCourtBookingAction` (`src/modules/billing/actions/booking-actions.ts`)
+## A. `bookCourt` (`src/modules/billing/actions/book-court.ts`)
+
+The page (`/dashboard/student/book`) shows the **availability grid**
+(`src/modules/billing/components/court-schedule-grid.tsx`): the club's
+bookable courts as columns, start times from 08:00 to 22:30 as rows, for a
+chosen day and length (1 h, 1 h 30, 2 h). The server works out every cell
+(`buildCourtGrid` in `lib/court-grid.ts`, unit tested): available with its
+price, booked, or unavailable (closed, too soon, runs into the next booking
+or closing, desk only). Picking a cell slides up a bar with *Proceed to
+Checkout*, which calls the action. The grid is a picture of the moment the
+page loaded; the action and the database decide.
 
 1. **Who:** `requireStudent()`. The Auth.js database session is read by the
-   DAL; the role must be STUDENT.
-2. **What:** zod parses the request: a facility id; date and times on a
+   DAL; the role must be STUDENT. The action takes no user id: the booking
+   is always for the signed-in student.
+2. **What:** zod parses the request: a court id; date and times on a
    15-minute grid; 30 minutes to 4 hours. `checkWindow()` then checks the
    facility's opening hours, at least 30 minutes' notice, at most 30 days
    ahead, and daylight-saving gaps. The **price is computed on the server**
    from the facility's dynamic pricing, never taken from the client. The fee
    is the club plan's rate (`platformFeeBpsFor`: 3% on Club Enterprise).
 3. **Hold, in one transaction:**
-   - Re-check the slot against court rentals and coached sessions.
    - Insert a `FacilityBooking` with status **`PENDING`** and a
-     `PaymentTransaction` with status `REQUIRES_PAYMENT_METHOD`, held for
-     15 minutes.
-   - The database has the last word. `FacilityBooking_no_overlap` and the
-     rental-vs-session trigger refuse an overlap even when two customers
-     submit the same slot in the same instant, and a `PENDING` row blocks
-     the slot exactly like a confirmed one.
+     `PaymentTransaction` with status `REQUIRES_PAYMENT_METHOD`, both
+     expiring at `now() + 15 minutes` on the database clock.
+   - Nothing is checked first: the database has the last word.
+     `FacilityBooking_no_overlap` (GiST exclusion) and the
+     `Facility_booking_overlap` trigger (rental vs coached session) raise
+     **23P01** even when two customers submit the same slot in the same
+     instant; the action answers "This timeslot was just taken" and the grid
+     refreshes. A `PENDING` row blocks the slot exactly like a confirmed one.
    - A customer can hold at most 2 unpaid courts at a time.
-4. **Charge, after commit:**
-   - `paymentIntents.create` runs outside the transaction, so no row locks
-     are held during a network call.
-   - Idempotency key `pi-<paymentId>`: a retried request returns the same
-     PaymentIntent and never charges twice.
-   - `metadata.paymentId` ties every later webhook to its row.
+4. **Checkout, after commit:**
+   - `checkout.sessions.create` runs outside the transaction, so no row
+     locks are held during a network call.
+   - Idempotency key `court-checkout-<paymentId>`: a retried request returns
+     the same session and never charges twice.
+   - `metadata.paymentId` (on the session and its PaymentIntent) ties every
+     later webhook to its row.
    - If Stripe fails, the hold is released at once.
-5. Returns the PaymentIntent's **`client_secret`**. The page mounts Stripe's
-   Payment Element and calls `confirmPayment`, so card data never touches
-   nexport.
+5. Returns the session's **URL**; the browser goes to Stripe Checkout, so
+   card data never touches nexport. *Pay now* in Bookings reopens the same
+   session while the hold lasts.
+
+**15-minute hold, 30-minute Checkout.** Stripe won't create a Checkout
+Session that expires sooner than 30 minutes, so it outlives the hold. When
+the hold lapses, `releaseExpiredHolds` frees the slot and expires the
+session at Stripe. If a payment still gets through, the webhook refunds it in
+full, reversing the club's transfer and nexport's fee.
 
 Why not `PracticeSession` with a `PENDING` state, as first asked:
 - A court rental has no coach or sport, and `PracticeSession` requires both.
@@ -89,7 +108,7 @@ Why not `PracticeSession` with a `PENDING` state, as first asked:
 | Event | Effect (`src/modules/payments/settle.ts`) |
 | --- | --- |
 | `payment_intent.succeeded` | Payment `SUCCEEDED` (charge id, paid at). Court: booking `PENDING → CONFIRMED`; the club's part (amount − fee) is recorded as a `PAID` transfer. Seat: club and coach transfers are queued `PENDING`. |
-| `checkout.session.completed` / `async_payment_succeeded` | Same, for Checkout seats. In `subscription` mode: provisions a paid plan ([onboarding.md](onboarding.md)) |
+| `checkout.session.completed` / `async_payment_succeeded` | Same, for Checkout courts and seats. In `subscription` mode: provisions a paid plan ([onboarding.md](onboarding.md)) |
 | `customer.subscription.created` / `updated` / `deleted` / `paused` / `resumed` | The plan's `Subscription` row follows Stripe (status, period, cancellation, plan change) |
 | `payment_intent.payment_failed` | Decline code and message are recorded, and the hold is **kept**. A failed PaymentIntent returns to `requires_payment_method` and can be retried with another card. If the hold then expires, the payment ends **`FAILED`** and the slot is released. |
 | `payment_intent.canceled` / `checkout.session.expired` | Payment `CANCELED`, slot or seat released (a plan checkout is marked `EXPIRED`, freeing its club address) |
@@ -139,20 +158,23 @@ every write.
 Stripe mock. It stands in for the API and Stripe.js, and sends correctly
 signed webhooks. The court-booking checks cover:
 - only clubs able to take charges are listed;
-- the PaymentIntent's amount, fee, destination, `on_behalf_of`, idempotency
-  key and metadata;
-- a declined card and its retry;
-- confirmation by webhook, with the club's transfer recorded;
-- an overlap refused;
+- the grid's courts and 08:00–22:30 rows, a localised price (36,00 €), and
+  the action bar appearing on selection;
+- the 15-minute hold on the database clock;
+- the Checkout Session's amount, fee, destination, `on_behalf_of`,
+  idempotency key, metadata and expiry;
+- confirmation by webhook, with the club's transfer recorded, and the slot
+  shown as booked;
+- a stale grid: the slot taken between page load and click (23P01);
 - two customers racing for one slot;
-- releasing a hold, which cancels the PaymentIntent;
-- an expired hold, then a late payment refunded with the transfer and fee
-  reversed;
-- resuming payment later;
+- releasing a hold, which expires its Checkout Session;
+- an expired hold expiring its Checkout, then a late payment refunded with
+  the transfer and fee reversed;
+- leaving Checkout and paying later with *Pay now*;
 - cancelling with a policy refund.
 
 Seat payments, forged and replayed webhooks are covered too. Unit tests:
-`src/modules/billing/lib/court-booking.test.ts`.
+`src/modules/billing/lib/court-booking.test.ts` and `court-grid.test.ts`.
 
 ## Not built yet
 

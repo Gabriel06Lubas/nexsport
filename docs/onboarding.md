@@ -111,7 +111,7 @@ requests can't both take the last place.
 | Overview heatmap, payroll panel, payout CSV | `advanced_analytics`, `payroll` (Enterprise). On Basic, the panels show an upgrade prompt and the CSV route returns 404. |
 | Coach sessions | `createSession`: the club's subscription must be active, and open matches need `open_matches`. Private sessions with a student run `canAddStudent` in the transaction, as do `addParticipant` and self-booking (`bookSlot`). |
 | Coach booking link | `saveProfile` needs `booking_link`. `getPublicCoach` hides the page without a live Pro subscription, and `getOpenSlots` drops clubs without a live subscription. |
-| Athletes | Court booking (`listBookableFacilities`, `createCourtBookingAction`) needs the club's subscription active. The open-match board and `joinOpenMatch` need an Enterprise club. |
+| Athletes | Court booking (`listBookableFacilities`, `bookCourt`) needs the club's subscription active. The open-match board and `joinOpenMatch` need an Enterprise club. |
 
 ## Subscription lifecycle (webhook)
 

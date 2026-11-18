@@ -153,7 +153,7 @@ export async function joinOpenMatch(_prev: ActionState, formData: FormData): Pro
   redirect(checkoutUrl as Route);
 }
 
-/** Back to Stripe Checkout for a seat that's still held. */
+/** Back to Stripe Checkout for a seat or a court that's still held. */
 export async function payHeldSeat(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const student = await requireStudent();
   const paymentId = String(formData.get("paymentId") ?? "");
@@ -169,7 +169,7 @@ export async function payHeldSeat(_prev: ActionState, formData: FormData): Promi
         gt(paymentTransaction.checkoutExpiresAt, sql`now()`),
       ),
     );
-  if (!payment?.url) return { error: "That hold has expired; join the match again if there's still room." };
+  if (!payment?.url) return { error: "That hold has expired. Book again if it's still free." };
   redirect(payment.url as Route);
 }
 
