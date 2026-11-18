@@ -24,6 +24,9 @@ export type SlotFacility = { id: string; clubId: string; openMinute: number; clo
 
 export type Slot = { startsAt: Date; endsAt: Date; clubId: string; facilityIds: string[] };
 
+/** A slot the coach's hours would offer but that's gone: the coach or every court is booked then. */
+export type TakenSlot = { startsAt: Date; endsAt: Date; clubId: string };
+
 const overlaps = (list: Interval[] | undefined, start: number, end: number) => !!list?.some((b) => b.start < end && b.end > start);
 
 export function openSlots(input: {
@@ -35,12 +38,15 @@ export function openSlots(input: {
   maxAdvanceDays: number;
   coachBusy: Interval[];
   facilityBusy: Map<string, Interval[]>;
+  /** When given, collects the slots that are taken (for the booking grid's "Booked" cells). */
+  taken?: TakenSlot[];
 }): Slot[] {
   const { sessionMinutes: len, now } = input;
   const earliest = now.getTime() + input.minNoticeHours * 3_600_000;
   const latest = now.getTime() + input.maxAdvanceDays * 86_400_000;
   const slots: Slot[] = [];
   const seen = new Set<string>();
+  const seenTaken = new Set<string>();
 
   for (const w of input.windows) {
     const today = zonedParts(now, w.timeZone).dateKey;
@@ -54,11 +60,17 @@ export function openSlots(input: {
         if (!startsAt || !endsAt) continue;
         const start = startsAt.getTime();
         const end = endsAt.getTime();
-        if (start < earliest || start > latest || overlaps(input.coachBusy, start, end)) continue;
-        const free = candidates
-          .filter((f) => m >= f.openMinute && m + len <= f.closeMinute && !overlaps(input.facilityBusy.get(f.id), start, end))
-          .map((f) => f.id);
+        if (start < earliest || start > latest) continue;
         const key = `${start}`;
+        const takenKey = `${w.clubId}:${start}`;
+        if (overlaps(input.coachBusy, start, end)) {
+          if (input.taken && !seenTaken.has(takenKey)) (seenTaken.add(takenKey), input.taken.push({ startsAt, endsAt, clubId: w.clubId }));
+          continue;
+        }
+        const open = candidates.filter((f) => m >= f.openMinute && m + len <= f.closeMinute);
+        const free = open.filter((f) => !overlaps(input.facilityBusy.get(f.id), start, end)).map((f) => f.id);
+        // Courts open but all booked: taken. No court open at all: not a slot.
+        if (free.length === 0 && open.length > 0 && input.taken && !seenTaken.has(takenKey)) (seenTaken.add(takenKey), input.taken.push({ startsAt, endsAt, clubId: w.clubId }));
         if (free.length === 0 || seen.has(key)) continue;
         seen.add(key);
         slots.push({ startsAt, endsAt, clubId: w.clubId, facilityIds: free });

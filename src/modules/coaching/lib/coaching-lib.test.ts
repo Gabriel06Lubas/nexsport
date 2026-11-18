@@ -4,7 +4,7 @@ import { formValues } from "@/lib/action-state";
 import { zonedToUtc } from "@/modules/clubs/lib/zoned-time";
 
 import { availabilitySchema, profileSchema, sessionSchema } from "./forms";
-import { openSlots, type SlotFacility } from "./slots";
+import { openSlots, type SlotFacility, type TakenSlot } from "./slots";
 
 const MADRID = "Europe/Madrid";
 const at = (date: string, hhmm: string) => zonedToUtc(date, Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3)), MADRID)!;
@@ -55,6 +55,22 @@ describe("openSlots", () => {
       ["f2", [iv("2026-11-02", "00:00", "23:59")]],
     ]);
     expect(openSlots({ ...base, facilityBusy: busy })).toEqual([]);
+  });
+
+  it("collects taken slots for the booking grid, without changing what's open", () => {
+    const taken: TakenSlot[] = [];
+    const slots = openSlots({ ...base, coachBusy: [iv("2026-11-02", "18:30", "19:30")], taken });
+    expect(times(slots)).toEqual([at("2026-11-02", "17:00").toISOString()]);
+    expect(taken.map((t) => [t.clubId, t.startsAt.toISOString()])).toEqual([
+      ["c1", at("2026-11-02", "18:00").toISOString()],
+      ["c1", at("2026-11-02", "19:00").toISOString()],
+    ]);
+    const courtsFull: TakenSlot[] = [];
+    openSlots({ ...base, facilityBusy: new Map([["f1", [iv("2026-11-02", "00:00", "23:59")]], ["f2", [iv("2026-11-02", "00:00", "23:59")]]]), taken: courtsFull });
+    expect(courtsFull).toHaveLength(3);
+    const tooSoon: TakenSlot[] = [];
+    openSlots({ ...base, minNoticeHours: 30, coachBusy: [iv("2026-11-02", "17:00", "18:00")], taken: tooSoon });
+    expect(tooSoon).toEqual([]); // past the notice period it isn't a slot at all
   });
 });
 

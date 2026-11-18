@@ -68,6 +68,14 @@ their dashboard (see [student-dashboard.md](student-dashboard.md)).
 
 ## Public booking
 
+- The page shows the open sessions as a booking grid, the same one as *Book
+  a court* (`src/components/booking/slot-grid.tsx`): the clubs the coach
+  teaches at as columns, start times as rows, one day at a time (day buttons
+  above, `?day=`). Each open cell shows the price; times the coach's hours
+  would offer but that are already taken (the coach or every court is
+  booked) show as *Booked*. Picking a slot slides up a bar with *Book
+  session*, *Sign in to book* for visitors, or nothing on the coach's own
+  page. The grid is built in `lib/slot-grid.ts` (unit tested).
 - Slots come from the weekly windows (club time zone), cut into session-length
   pieces, from the minimum notice up to the booking horizon. A slot is offered
   only if the coach is free and the preferred court (or any active court of

@@ -1,20 +1,22 @@
-import { CalendarCheck, MapPin } from "lucide-react";
 import type { Metadata, Route } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { dayLabel, DayPicker } from "@/components/booking/day-picker";
+import type { SlotCell } from "@/components/booking/slot-grid";
 import { formatTime } from "@/components/dashboard/ui";
-import { ActionButton } from "@/components/forms/action-form";
-import { ButtonLink } from "@/components/ui/button";
 import { formatMoney } from "@/lib/utils";
 import { getCurrentUser } from "@/modules/auth/dal";
 import { clubSlugPattern } from "@/modules/clubs/lib/permissions";
 import { zonedParts } from "@/modules/clubs/lib/zoned-time";
-import { bookSlot } from "@/modules/coaching/actions/booking";
-import { clubNames, getBookingFor, getOpenSlots, getPublicCoach } from "@/modules/coaching/queries/booking";
+import { CoachScheduleGrid } from "@/modules/coaching/components/coach-schedule-grid";
+import { buildCoachGrid } from "@/modules/coaching/lib/slot-grid";
+import { clubNames, getBookingFor, getPublicCoach, getSlotGrid } from "@/modules/coaching/queries/booking";
 
-// A coach's public booking page: who they are, their rates, and every open
-// private slot. Anyone can look; booking needs a signed-in account.
+// A coach's public booking page: who they are, their rates, and their open
+// private sessions as a booking grid (the clubs they teach at as columns,
+// start times as rows, one day at a time). Anyone can look; booking needs a
+// signed-in account.
 
 type Params = Promise<{ slug: string }>;
 
@@ -35,22 +37,38 @@ export default async function CoachBookingPage({ params, searchParams }: { param
   const { slug } = await params;
   const coach = await load(slug);
   if (!coach) notFound();
-  const [slots, viewer] = await Promise.all([getOpenSlots(coach), getCurrentUser()]);
-  const bookedParam = (await searchParams).booked;
+  const [{ open, taken }, viewer] = await Promise.all([getSlotGrid(coach), getCurrentUser()]);
+  const sp = await searchParams;
+  const bookedParam = sp.booked;
   // Only the student who booked it sees the confirmation details.
   const booked = viewer && typeof bookedParam === "string" ? await getBookingFor(bookedParam, viewer.id, coach.userId) : null;
-  const clubs = await clubNames([...new Set(slots.map((s) => s.clubId))]);
+  const clubs = await clubNames([...new Set([...open, ...taken].map((s) => s.clubId))]);
   const price = Math.round((coach.privateRateAmount * coach.sessionMinutes) / 60);
   const money = (n: number) => formatMoney(n, coach.currency);
   const own = viewer?.id === coach.userId;
 
-  // Group by local day at the slot's club.
-  const days = new Map<string, typeof slots>();
-  for (const s of slots.slice(0, 120)) {
-    const tz = clubs.get(s.clubId)?.timezone ?? "UTC";
-    const key = zonedParts(s.startsAt, tz).dateKey;
-    days.set(key, [...(days.get(key) ?? []), s]);
-  }
+  const grid = buildCoachGrid({
+    open,
+    taken,
+    clubs: [...clubs.entries()].map(([id, c]) => ({ id, name: c.city ? `${c.name}, ${c.city}` : c.name, timeZone: c.timezone })).sort((a, b) => a.name.localeCompare(b.name)),
+  });
+  const requestedDay = typeof sp.day === "string" ? sp.day : undefined;
+  const day = requestedDay && grid.days.includes(requestedDay) ? requestedDay : grid.firstOpenDay;
+  const priceLabel = money(price);
+  const rows = day
+    ? grid.rowsFor(day).map((r) => ({
+        time: r.time,
+        cells: r.cells.map(
+          (c): SlotCell =>
+            c.state === "available"
+              ? { state: "available", startTime: c.startTime, endTime: c.endTime, priceLabel, value: c.startsAt }
+              : c.state === "booked"
+                ? { state: "booked" }
+                : { state: "unavailable", label: "No session at this time" },
+        ),
+      }))
+    : [];
+  const signInHref = `/login?callbackUrl=${encodeURIComponent(`/coach/${coach.slug}${day ? `?day=${day}` : ""}`)}` as Route;
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-12 sm:px-6">
@@ -90,55 +108,31 @@ export default async function CoachBookingPage({ params, searchParams }: { param
         </h2>
         {!viewer && (
           <p className="mt-2 text-sm text-muted-foreground">
-            <Link href={`/login?callbackUrl=${encodeURIComponent(`/coach/${coach.slug}`)}` as Route} className="font-medium text-accent-text hover:underline">
+            <Link href={signInHref} className="font-medium text-accent-text hover:underline">
               Sign in
             </Link>{" "}
             to book a slot.
           </p>
         )}
         {own && <p className="mt-2 text-sm text-muted-foreground">This is your booking page, as students see it.</p>}
-        {days.size === 0 ? (
+        {!day ? (
           <p className="mt-6 rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
             No open slots right now. Check back soon.
           </p>
         ) : (
-          <ol className="mt-6 space-y-6">
-            {[...days.entries()].map(([day, list]) => (
-              <li key={day}>
-                <h3 className="text-sm font-semibold">{dayFormat.format(new Date(`${day}T12:00:00Z`))}</h3>
-                <ul className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  {list.map((s) => {
-                    const club = clubs.get(s.clubId);
-                    const tz = club?.timezone ?? "UTC";
-                    return (
-                      <li key={`${s.clubId}-${s.startsAt.toISOString()}`} className="flex items-center justify-between gap-3 rounded-2xl border border-border bg-card px-4 py-3">
-                        <span className="min-w-0 text-sm">
-                          <span className="flex items-center gap-1.5 font-medium tabular-nums">
-                            <CalendarCheck className="size-4 text-muted-foreground" aria-hidden />
-                            {formatTime(s.startsAt, tz)}–{formatTime(s.endsAt, tz)}
-                          </span>
-                          <span className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
-                            <MapPin className="size-3.5" aria-hidden />
-                            {club?.name}
-                            {club?.city && `, ${club.city}`}
-                          </span>
-                        </span>
-                        {viewer && !own ? (
-                          <ActionButton action={bookSlot} hidden={{ coachSlug: coach.slug, clubId: s.clubId, startsAt: s.startsAt.toISOString() }} variant="primary" pendingLabel="Booking…">
-                            Book
-                          </ActionButton>
-                        ) : !viewer ? (
-                          <ButtonLink href={`/login?callbackUrl=${encodeURIComponent(`/coach/${coach.slug}`)}` as Route} size="sm" variant="outline">
-                            Sign in
-                          </ButtonLink>
-                        ) : null}
-                      </li>
-                    );
-                  })}
-                </ul>
-              </li>
-            ))}
-          </ol>
+          <div className="mt-6 space-y-4">
+            <DayPicker days={grid.days} current={day} href={(d) => `/coach/${coach.slug}?day=${d}` as Route} />
+            <CoachScheduleGrid
+              coachSlug={coach.slug}
+              clubs={grid.columns.map((c) => ({ id: c.id, name: c.name }))}
+              rows={rows}
+              day={day}
+              dateLabel={dayLabel(day)}
+              sessionMinutes={coach.sessionMinutes}
+              mode={own ? "own" : viewer ? "book" : "sign-in"}
+              signInHref={signInHref}
+            />
+          </div>
         )}
         <p className="mt-6 text-xs text-muted-foreground">Times are local to each club. Payment is taken at the club.</p>
       </section>

@@ -1,10 +1,12 @@
 import type { Metadata, Route } from "next";
 import Link from "next/link";
 
+import { dayLabel, DayPicker } from "@/components/booking/day-picker";
+import type { SlotCell } from "@/components/booking/slot-grid";
 import { PageHeader, Panel } from "@/components/dashboard/ui";
 import { cn, formatMoney } from "@/lib/utils";
 import { idSchema } from "@/lib/validation";
-import { CourtScheduleGrid, type GridCellView } from "@/modules/billing/components/court-schedule-grid";
+import { CourtScheduleGrid } from "@/modules/billing/components/court-schedule-grid";
 import { MAX_ADVANCE_DAYS } from "@/modules/billing/lib/court-booking";
 import { buildCourtGrid, GRID_DURATIONS, moneyLocale, parseGridDuration, type GridCell } from "@/modules/billing/lib/court-grid";
 import { getCourtGridData, listBookableClubs } from "@/modules/billing/queries/court-booking";
@@ -77,7 +79,7 @@ export default async function BookCourtPage({ searchParams }: { searchParams: Se
   const rows = grid.map((r) => ({
     time: r.time,
     cells: r.cells.map(
-      (c): GridCellView =>
+      (c): SlotCell =>
         c.state === "available"
           ? {
               state: "available",
@@ -136,22 +138,7 @@ export default async function BookCourtPage({ searchParams }: { searchParams: Se
       >
         <div className="space-y-4 p-4 sm:p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <nav aria-label="Day" className="-mx-1 flex gap-1 overflow-x-auto px-1">
-              {days.map((d) => (
-                <Link
-                  key={d}
-                  href={href({ date: d })}
-                  aria-current={d === date ? "date" : undefined}
-                  className={cn(
-                    "flex min-w-14 shrink-0 flex-col items-center whitespace-nowrap rounded-xl border px-2 py-1.5 text-xs transition",
-                    d === date ? "border-ink bg-ink text-ink-foreground" : "border-border bg-background hover:border-foreground/40",
-                  )}
-                >
-                  <span className="font-medium">{dayName(d)}</span>
-                  <span className="tabular-nums">{dayNumber(d)}</span>
-                </Link>
-              ))}
-            </nav>
+            <DayPicker days={days} current={date} href={(d) => href({ date: d })} />
             <nav aria-label="Booking length" className="flex rounded-full border border-border bg-background p-0.5 text-xs">
               {GRID_DURATIONS.map((d) => (
                 <Link
@@ -170,7 +157,7 @@ export default async function BookCourtPage({ searchParams }: { searchParams: Se
             courts={data?.courts.map((c) => ({ id: c.id, name: c.name })) ?? []}
             rows={rows}
             date={date}
-            dateLabel={`${dayName(date)} ${dayNumber(date)}`}
+            dateLabel={dayLabel(date)}
             duration={duration}
           />
         </div>
@@ -178,16 +165,3 @@ export default async function BookCourtPage({ searchParams }: { searchParams: Se
     </div>
   );
 }
-
-/** "Tue" and "18 Nov" for a local date key (read at noon UTC, so the zone can't shift the day). */
-const weekday = new Intl.DateTimeFormat("en-GB", {
-  weekday: "short",
-  timeZone: "UTC",
-});
-const dayMonth = new Intl.DateTimeFormat("en-GB", {
-  day: "numeric",
-  month: "short",
-  timeZone: "UTC",
-});
-const dayName = (key: string) => weekday.format(new Date(`${key}T12:00:00Z`));
-const dayNumber = (key: string) => dayMonth.format(new Date(`${key}T12:00:00Z`));

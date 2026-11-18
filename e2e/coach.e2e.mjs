@@ -114,6 +114,13 @@ async function emailSignIn(context, address) {
 
 const status = async (page, path) => (await page.goto(`${APP}${path}`)).status();
 const form = (page, name) => page.getByRole("form", { name });
+// A click before React hydrates the grid does nothing: click until the cell reads as selected.
+const pickSlot = async (slot) => {
+  for (let i = 0; i < 40 && (await slot.getAttribute("aria-pressed")) !== "true"; i++) {
+    await slot.click();
+    await slot.page().waitForTimeout(250);
+  }
+};
 const said = (scope, text) => scope.getByText(text, { exact: false }).first().waitFor({ timeout: 15_000 }).then(() => true, () => false);
 const madridDate = async (sqlExpr) => (await one(`SELECT to_char(${sqlExpr}, 'YYYY-MM-DD') AS d`)).d;
 
@@ -129,9 +136,14 @@ try {
   check((await status(anon, "/coach/nobody-here")) === 404, "an unknown booking link is a 404");
   await anon.goto(`${APP}/coach/lucia-romero`);
   check(
-    (await anon.getByRole("heading", { name: "Lucía Romero" }).isVisible()) && (await anon.getByRole("link", { name: "Sign in" }).count()) > 1,
+    (await anon.getByRole("heading", { name: "Lucía Romero" }).isVisible()) && (await anon.locator("#main").getByRole("link", { name: "Sign in", exact: true }).isVisible()),
     "the public booking page is open to everyone, with sign-in to book",
   );
+  const anonSlot = anon.getByRole("table").getByRole("button").first();
+  check((await anonSlot.count()) === 1 && (await anon.getByRole("rowheader").count()) > 0, "open sessions are shown as a booking grid (clubs × start times)");
+  await pickSlot(anonSlot);
+  const signInToBook = anon.getByRole("link", { name: "Sign in to book" });
+  check((await signInToBook.isVisible()) && decodeURIComponent((await signInToBook.getAttribute("href")) ?? "").includes("/coach/lucia-romero?day="), "picking a slot signed out offers Sign in to book, back to the same day");
 
   const athlete = await emailSignIn(await newContext(), "athlete01@demo.nexport.test");
   await athlete.goto(`${APP}${COACH}/earnings`);
@@ -280,12 +292,19 @@ try {
   const student = await emailSignIn(await newContext(), "athlete06@demo.nexport.test");
   await student.goto(`${APP}/coach/lucia-e2e`);
   check(await student.getByText("€45.00 · 60 min").isVisible(), "the public page shows the new rate");
-  const slotButtons = student.getByRole("button", { name: "Book", exact: true });
+  const firstSlot = (page) => page.getByRole("table").getByRole("button").first();
+  const slotPrice = await firstSlot(student).innerText();
+  check(slotPrice === "€45.00", `each open session in the grid shows the price (${slotPrice})`);
   for (let i = 1; i <= 3; i++) {
-    await slotButtons.first().click();
-    check(await said(student, "You're booked with Lucía Romero."), `a student books slot ${i} and sees the confirmation`);
+    const before = new URL(student.url()).searchParams.get("booked");
+    await pickSlot(firstSlot(student));
+    await student.getByRole("button", { name: "Book session" }).click();
+    // The previous confirmation is still on screen: wait for this booking's redirect.
+    const landed = await student.waitForURL((u) => !!u.searchParams.get("booked") && u.searchParams.get("booked") !== before, { timeout: 15_000 }).then(() => true, () => false);
+    check(landed && (await said(student, "You're booked with Lucía Romero.")), `a student picks slot ${i} in the grid, books it and sees the confirmation`);
   }
-  await slotButtons.first().click();
+  await pickSlot(firstSlot(student));
+  await student.getByRole("button", { name: "Book session" }).click();
   check(await said(student, "You already have 3 upcoming sessions"), "a student can hold at most 3 upcoming self-booked sessions with a coach");
   const booked = await one(`
     SELECT count(*)::int AS n, min(s."priceAmount")::int AS price FROM "PracticeSession" s JOIN "SessionParticipant" p ON p."sessionId" = s.id
@@ -294,14 +313,19 @@ try {
 
   const [a4, a5] = await Promise.all([emailSignIn(await newContext(), "athlete04@demo.nexport.test"), emailSignIn(await newContext(), "athlete05@demo.nexport.test")]);
   await Promise.all([a4.goto(`${APP}/coach/lucia-e2e`), a5.goto(`${APP}/coach/lucia-e2e`)]);
-  const slotText = await a4.getByRole("button", { name: "Book", exact: true }).first().locator("xpath=ancestor::li[1]").innerText();
-  await Promise.all([a4.getByRole("button", { name: "Book", exact: true }).first().click(), a5.getByRole("button", { name: "Book", exact: true }).first().click()]);
+  const slotText = (await firstSlot(a4).getAttribute("aria-label")) ?? "";
+  await Promise.all([pickSlot(firstSlot(a4)), pickSlot(firstSlot(a5))]);
+  await Promise.all([a4.getByRole("button", { name: "Book session" }).click(), a5.getByRole("button", { name: "Book session" }).click()]);
   const [r4, r5] = await Promise.all([said(a4, "You're booked"), said(a5, "You're booked")]);
   const lost = (await a4.getByText("Someone booked that slot").count()) + (await a5.getByText("Someone booked that slot").count()) + (await a4.getByText("just taken").count()) + (await a5.getByText("just taken").count());
-  check(Number(r4) + Number(r5) === 1 && lost === 1, `two students racing for ${slotText.split("\n")[0]}: exactly one gets it`);
+  check(Number(r4) + Number(r5) === 1 && lost === 1, `two students racing for ${slotText}: exactly one gets it`);
 
   const own = await coach.goto(`${APP}/coach/lucia-e2e`).then(() => coach);
-  check((await own.getByText("This is your booking page").isVisible()) && (await own.getByRole("button", { name: "Book", exact: true }).count()) === 0, "the coach sees their own page without booking buttons");
+  await pickSlot(firstSlot(own));
+  check(
+    (await own.getByText("This is your booking page, as students see it.").first().isVisible()) && (await own.getByRole("button", { name: "Book session" }).count()) === 0,
+    "the coach sees their own page as a grid, without a booking button",
+  );
 
   // 8. Earnings ------------------------------------------------------------------------
   await coach.goto(`${APP}${COACH}/earnings`);
