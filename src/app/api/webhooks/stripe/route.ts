@@ -3,17 +3,17 @@ import type { NextRequest } from "next/server";
 import type Stripe from "stripe";
 
 import { db } from "@/db";
-import { paymentTransaction, stripeWebhookEvent } from "@/db/schema";
+import { stripeWebhookEvent } from "@/db/schema";
 import {
   recordIntentFailure,
   releaseCheckoutHold,
   releaseIntentHold,
   settleCheckout,
   settleIntent,
-  type SettleResult,
 } from "@/modules/payments/settle";
-import { connectAccountChanged, disconnectConnectAccount, sendPendingTransfers } from "@/modules/payments/connect";
-import { getStripe, refundPayment } from "@/modules/payments/stripe";
+import { connectAccountChanged, disconnectConnectAccount } from "@/modules/payments/connect";
+import { afterSettle } from "@/modules/payments/reconcile";
+import { getStripe } from "@/modules/payments/stripe";
 import { expirePlanCheckout, provisionFromCheckout, syncSubscription } from "@/modules/payments/subscriptions";
 
 // POST /api/webhooks/stripe
@@ -132,28 +132,4 @@ async function handle(stripe: Stripe, event: Stripe.Event) {
     default:
       return; // recorded in the log, nothing to do
   }
-}
-
-/**
- * Settled (now, or by an earlier delivery of the same outcome): send the
- * seat's shares to the club and the coach, if their accounts can receive
- * them. A failure here never fails the webhook: the payment is settled, and
- * the shares stay PENDING for the next attempt (this event's retry, the
- * account's next update, or the owner's next visit to Billing / Earnings).
- */
-async function afterSettle(stripe: Stripe, paymentId: string | null | undefined, result: SettleResult) {
-  if ((result === "settled" || result === "already-settled") && paymentId) {
-    await sendPendingTransfers(stripe, { paymentId }).catch((error) => console.error(`[connect] sending shares of ${paymentId} failed`, error));
-  }
-  return refundIfLate(stripe, result);
-}
-
-/** A payment that landed after its hold was released is refunded in full. */
-async function refundIfLate(stripe: Stripe, result: SettleResult) {
-  if (typeof result !== "object") return;
-  await refundPayment(stripe, result.refund);
-  await db
-    .update(paymentTransaction)
-    .set({ refundStatus: "REFUNDED", refundedAmount: result.refund.amount, refundedAt: sql`now()` })
-    .where(eq(paymentTransaction.id, result.refund.paymentId));
 }

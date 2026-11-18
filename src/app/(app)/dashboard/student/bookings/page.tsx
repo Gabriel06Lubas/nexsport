@@ -10,6 +10,7 @@ import { parseListParams, pickParam } from "@/lib/list-params";
 import { cn, formatMoney } from "@/lib/utils";
 import { BookingCard, bookingDay } from "@/modules/student/components/booking-card";
 import { RefreshWhile } from "@/components/refresh-while";
+import { reconcileOpenCheckouts } from "@/modules/payments/reconcile";
 import { requireStudent } from "@/modules/student/dal";
 import { isPassValid, listMyBookings, listMyCreditHistory, listMyPasses, type BookingScope } from "@/modules/student/queries/bookings";
 import { loadPolicies } from "@/modules/student/queries/policy";
@@ -23,6 +24,8 @@ const kindLabel = { PRIVATE: "Private session", GROUP: "Group clinic", OPEN_MATC
 
 export default async function BookingsPage({ searchParams }: { searchParams: SearchParams }) {
   const student = await requireStudent();
+  // Payments Stripe has taken but no webhook has confirmed yet (lost or late events) are settled before anything is shown.
+  await reconcileOpenCheckouts(student.id);
   const sp = await searchParams;
   const scope = pickParam(sp.scope, SCOPES, "upcoming");
   const { page } = parseListParams(sp);

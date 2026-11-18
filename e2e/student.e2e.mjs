@@ -65,6 +65,7 @@ const stripeCalls = [];
 const checkouts = new Map();
 let seq = 0;
 let lastWebhook = null;
+let dropWebhooks = false;
 async function sendWebhook(type, object) {
   const payload = JSON.stringify({ id: `evt_e2e_${++seq}`, object: "event", type, livemode: false, created: Math.floor(Date.now() / 1000), api_version: "2026-09-30.endive", data: { object } });
   const header = signer.webhooks.generateTestHeaderString({ payload, secret: WEBHOOK_SECRET });
@@ -86,6 +87,7 @@ const stripeServer = createServer(async (req, res) => {
     if (!m[2]) return html(`<h1>Pay ${cs.amount / 100} ${cs.currency}</h1><form method="post" action="/pay/${cs.id}/complete"><button>Pay</button></form><form method="post" action="/pay/${cs.id}/back"><button>Back</button></form>`);
     if (m[3] === "back") return (res.writeHead(303, { location: cs.cancel_url }), res.end());
     cs.paid = true;
+    if (dropWebhooks) return (res.writeHead(303, { location: cs.success_url }), res.end()); // a lost event (listener down, wrong secret)
     await sendWebhook("checkout.session.completed", { id: cs.id, object: "checkout.session", payment_status: "paid", status: "complete", payment_intent: `pi_e2e_${cs.id}`, metadata: { paymentId: cs.paymentId }, client_reference_id: cs.paymentId });
     return (res.writeHead(303, { location: cs.success_url }), res.end());
   }
@@ -108,6 +110,21 @@ const stripeServer = createServer(async (req, res) => {
     };
     checkouts.set(id, cs);
     return json(200, { id, object: "checkout.session", url: `${STRIPE}/pay/${id}`, status: "open" });
+  }
+  // Reading a session back (the app checks how a Checkout ended when the webhook is late or lost).
+  const readSession = url.pathname.match(/^\/v1\/checkout\/sessions\/(cs_e2e_\d+)$/);
+  if (req.method === "GET" && readSession) {
+    const cs = checkouts.get(readSession[1]);
+    if (!cs) return json(404, { error: { type: "invalid_request_error", code: "resource_missing", message: "No such checkout session" } });
+    return json(200, {
+      id: cs.id,
+      object: "checkout.session",
+      status: cs.paid ? "complete" : cs.expired ? "expired" : "open",
+      payment_status: cs.paid ? "paid" : "unpaid",
+      payment_intent: cs.paid ? `pi_e2e_${cs.id}` : null,
+      metadata: { paymentId: cs.paymentId },
+      client_reference_id: cs.paymentId,
+    });
   }
   const expire = url.pathname.match(/^\/v1\/checkout\/sessions\/(cs_e2e_\d+)\/expire$/);
   if (req.method === "POST" && expire) {
@@ -479,6 +496,28 @@ try {
   check(await atCheckout(a1), "Pay now reopens the same Checkout");
   await a1.getByRole("button", { name: "Pay" }).click();
   check(await said(a1, "Payment received (€24.00). You're confirmed."), "a held court can be paid later from its Pay now button");
+
+  // Stripe took the money but the webhook never came: coming back from Checkout settles it anyway.
+  check(await bookCourt(a1, "19:00", "20:00"), "a player holds 19:00");
+  const lostCs = lastCheckout();
+  dropWebhooks = true;
+  await a1.getByRole("button", { name: "Pay" }).click();
+  check(await said(a1, "Payment received (€24.00). You're confirmed."), "with the webhook lost, returning from Checkout still confirms the booking (checked with Stripe)");
+  const lost = await one(`SELECT b.status, pt.status AS pay, pt."stripePaymentIntentId" AS intent, (SELECT status FROM "PaymentTransfer" WHERE "paymentId" = pt.id) AS transfer
+                            FROM "PaymentTransaction" pt JOIN "FacilityBooking" b ON b.id = pt."facilityBookingId" WHERE pt."stripeCheckoutSessionId" = $1`, [lostCs.id]);
+  check(lost.status === "CONFIRMED" && lost.pay === "SUCCEEDED" && lost.intent === `pi_e2e_${lostCs.id}` && lost.transfer === "PAID", "…the same settlement as the webhook: booking confirmed, club's share recorded");
+
+  // Paid in another tab while Bookings was open, webhook lost: Pay now says so instead of reopening a paid Checkout.
+  check(await bookCourt(a1, "20:00", "21:00"), "a player holds 20:00");
+  const paidElsewhere = lastCheckout();
+  await a1.goto(`${APP}${HOME}/bookings`);
+  await fetch(`${STRIPE}/pay/${paidElsewhere.id}/complete`, { method: "POST", redirect: "manual" });
+  const pendingCard = a1.getByRole("article").filter({ hasText: "E2E Court" }).filter({ hasText: "20:00" }).filter({ hasText: "Pending" });
+  await pendingCard.getByRole("button", { name: "Pay now" }).click();
+  check(await said(a1, "Payment received (€24.00). You're confirmed."), "Pay now on a Checkout Stripe already took settles it and shows the confirmation, instead of reopening Checkout");
+  check(a1.url().startsWith(`${APP}${HOME}/bookings`), "…staying in the app (no trip back to a paid Checkout)");
+  check((await one(`SELECT b.status FROM "PaymentTransaction" pt JOIN "FacilityBooking" b ON b.id = pt."facilityBookingId" WHERE pt."stripeCheckoutSessionId" = $1`, [paidElsewhere.id])).status === "CONFIRMED", "…and the booking is confirmed");
+  dropWebhooks = false;
 
   // Cancelling the paid court 5 days out: full refund, through the destination charge.
   await a1.goto(`${APP}${HOME}/bookings`);

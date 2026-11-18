@@ -114,6 +114,21 @@ Why not `PracticeSession` with a `PENDING` state, as first asked:
 | `payment_intent.canceled` / `checkout.session.expired` | Payment `CANCELED`, slot or seat released (a plan checkout is marked `EXPIRED`, freeing its club address) |
 | Paid **after** its hold was released | The payment is recorded and refunded in full. For a court, the refund uses `reverse_transfer` and `refund_application_fee`. |
 
+**When the webhook is late or lost** (a local `stripe listen` not running or
+logged into another account, a wrong signing secret, a Stripe delay), a paid
+Checkout would stay "waiting for payment". So the app also asks Stripe
+(`reconcileCheckout`, `src/modules/payments/reconcile.ts`):
+- when the player opens Bookings or their dashboard (each of their open
+  Checkout payments, at most a handful);
+- when they tap *Pay now*: a Checkout Stripe already took is settled and they
+  see the confirmation, instead of being sent back to a paid Checkout.
+
+It reads only the session id stored on the player's own open payment (never
+one from the URL), checks the session carries the same payment id, and
+settles through the same code as the webhook (`settleCheckout`, then
+`afterSettle`: seat shares, or the refund of a late payment), so whichever
+arrives second changes nothing. An expired session releases the hold.
+
 Releasing a hold on a declined card immediately would stop the customer
 retrying with another card, so a decline is recorded and the release waits
 for the hold to expire.
@@ -171,6 +186,8 @@ signed webhooks. The court-booking checks cover:
 - an expired hold expiring its Checkout, then a late payment refunded with
   the transfer and fee reversed;
 - leaving Checkout and paying later with *Pay now*;
+- a lost webhook: returning from Checkout, or tapping *Pay now* on a
+  Checkout already paid, still confirms the booking;
 - cancelling with a policy refund.
 
 Seat payments, forged and replayed webhooks are covered too. Unit tests:

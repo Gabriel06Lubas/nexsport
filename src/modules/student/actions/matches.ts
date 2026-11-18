@@ -13,6 +13,7 @@ import { formValues, type ActionState } from "@/lib/action-state";
 import { clubOpenToPublicSql } from "@/lib/entitlements";
 import { formatMoney } from "@/lib/utils";
 import { platformFeeBpsFor } from "@/modules/payments/platform-fee";
+import { reconcileCheckout } from "@/modules/payments/reconcile";
 import { releaseExpiredHolds } from "@/modules/payments/settle";
 import { CHECKOUT_HOLD_MINUTES, createSeatCheckout, ensureCustomer, getStripe } from "@/modules/payments/stripe";
 
@@ -158,6 +159,16 @@ export async function payHeldSeat(_prev: ActionState, formData: FormData): Promi
   const student = await requireStudent();
   const paymentId = String(formData.get("paymentId") ?? "");
   if (!/^[a-z0-9]{1,64}$/.test(paymentId)) return { error: "Unknown payment." };
+  // Already paid (or expired) at Stripe but the webhook hasn't said so yet: settle it now instead of reopening Checkout.
+  const outcome = await reconcileCheckout(paymentId, student.id);
+  if (outcome === "settled") {
+    revalidatePath("/dashboard/student", "layout");
+    redirect(`/dashboard/student/bookings?checkout=success&payment=${paymentId}` as Route);
+  }
+  if (outcome === "expired") {
+    revalidatePath("/dashboard/student", "layout");
+    return { error: "That hold has expired. Book again if it's still free." };
+  }
   const [payment] = await db
     .select({ url: paymentTransaction.checkoutUrl })
     .from(paymentTransaction)

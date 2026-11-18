@@ -5,6 +5,7 @@ import Link from "next/link";
 import { EmptyState, formatDate, KpiCard, PageHeader } from "@/components/dashboard/ui";
 import { Badge } from "@/components/ui/badge";
 import { BookingCard, bookingDay } from "@/modules/student/components/booking-card";
+import { reconcileOpenCheckouts } from "@/modules/payments/reconcile";
 import { requireStudent } from "@/modules/student/dal";
 import { getMyFeed, isPassValid, listMyClubs, listMyPasses } from "@/modules/student/queries/bookings";
 import { loadPolicies } from "@/modules/student/queries/policy";
@@ -15,6 +16,8 @@ type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 export default async function StudentOverviewPage({ searchParams }: { searchParams: SearchParams }) {
   const student = await requireStudent();
+  // Payments Stripe has taken but no webhook has confirmed yet (lost or late events) are settled before anything is shown.
+  await reconcileOpenCheckouts(student.id);
   const checkout = (await searchParams).checkout;
   const [feed, passes, clubs] = await Promise.all([getMyFeed(student.id), listMyPasses(student.id), listMyClubs(student.id)]);
   const policyFor = await loadPolicies(feed.map((b) => ({ clubId: b.clubId, policyId: b.policyId })));
