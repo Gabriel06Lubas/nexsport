@@ -72,6 +72,13 @@ export const attendanceSchema = z.object({
   status: z.enum(attendanceStatus.enumValues),
 });
 
+/** A coach's private note on how an athlete did, and an optional 1–5 rating (cleared with empty values). */
+export const feedbackSchema = z.object({
+  participantId: idSchema,
+  feedback: z.preprocess(empty, plainText({ min: 1, max: 500, label: "note" }).nullable()),
+  rating: z.preprocess(empty, z.coerce.number().int().min(1, "Rate from 1 to 5").max(5, "Rate from 1 to 5").nullable()),
+});
+
 export const creditSchema = z.object({
   passId: idSchema,
   direction: z.enum(["deduct", "restore"]),

@@ -7,7 +7,7 @@ import { attendance, club, memberPass, passCreditAdjustment, practiceSession, se
 import { formValues, invalid, type ActionState } from "@/lib/action-state";
 
 import { getCoachClubs, requireCoach } from "../dal";
-import { attendanceSchema, creditSchema } from "../lib/forms";
+import { attendanceSchema, creditSchema, feedbackSchema } from "../lib/forms";
 import { isStudentAt } from "../queries/students";
 import { revalidateCoach } from "./shared";
 
@@ -43,8 +43,34 @@ export async function markAttendance(_prev: ActionState, formData: FormData): Pr
     .insert(attendance)
     .values({ sessionId: p.sessionId, participantId, userId: p.userId, status, markedById: coach.id, checkedInAt })
     .onConflictDoUpdate({ target: attendance.participantId, set: { status, markedById: coach.id, checkedInAt, updatedAt: new Date() } });
-  revalidateCoach("", "/students");
+  revalidateCoach("", "/students", `/sessions/${p.sessionId}`);
   return { ok: `Marked ${status.toLowerCase()}.` };
+}
+
+/**
+ * A private note (and 1–5 rating) on how an athlete did, kept on their
+ * check-in: only for athletes already marked, on the coach's own sessions.
+ * Not shown to the athlete.
+ */
+export async function saveFeedback(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const coach = await requireCoach();
+  const values = formValues(formData);
+  const parsed = feedbackSchema.safeParse(values);
+  if (!parsed.success) return invalid(parsed.error, values);
+  const { participantId, feedback, rating } = parsed.data;
+  const updated = await db
+    .update(attendance)
+    .set({ coachFeedback: feedback, performanceRating: rating, updatedAt: new Date() })
+    .where(
+      and(
+        eq(attendance.participantId, participantId),
+        sql`EXISTS (SELECT 1 FROM "PracticeSession" s WHERE s.id = "Attendance"."sessionId" AND s."coachId" = ${coach.id})`,
+      ),
+    )
+    .returning({ sessionId: attendance.sessionId });
+  if (updated.length === 0) return { error: "Mark attendance first; notes are kept with the check-in." };
+  revalidateCoach(`/sessions/${updated[0]!.sessionId}`);
+  return { ok: "Note saved." };
 }
 
 export async function adjustCredit(_prev: ActionState, formData: FormData): Promise<ActionState> {

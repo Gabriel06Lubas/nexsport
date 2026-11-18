@@ -3,6 +3,7 @@ import { MapPin, Navigation } from "lucide-react";
 import { formatTime } from "@/components/dashboard/ui";
 import { ActionButton } from "@/components/forms/action-form";
 import { Badge } from "@/components/ui/badge";
+import { directionsUrl as mapsUrl } from "@/lib/maps";
 import { formatMoney } from "@/lib/utils";
 import { zonedParts } from "@/modules/clubs/lib/zoned-time";
 
@@ -24,8 +25,7 @@ export const bookingDay = (b: Pick<MyBooking, "startsAt" | "timezone">) => dayFo
 
 /** Google Maps search for the club's address (no API key needed). */
 export function directionsUrl(b: Pick<MyBooking, "clubName" | "address" | "city" | "country">) {
-  const query = [b.clubName, b.address, b.city, b.country].filter(Boolean).join(", ");
-  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+  return mapsUrl([b.clubName, b.address, b.city, b.country]);
 }
 
 /** What cancelling now would mean, in one line. */

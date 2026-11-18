@@ -327,6 +327,49 @@ try {
     "the coach sees their own page as a grid, without a booking button",
   );
 
+  // 7b. Session page: details, one-tap contact, calendar, check-in and notes --------------
+  const lesson = await one(`
+    SELECT s.id, s.title, u.name AS athlete, pr.phone FROM "PracticeSession" s
+      JOIN "SessionParticipant" p ON p."sessionId" = s.id AND p.status = 'ACCEPTED'
+      JOIN "User" u ON u.id = p."userId" JOIN "Profile" pr ON pr."userId" = u.id
+     WHERE s."coachId" = 'democoach01' AND s."createdById" = 'demoathlete06' AND s.status = 'SCHEDULED' AND s."startsAt" > now() + interval '1 hour'
+     ORDER BY s."startsAt" LIMIT 1`);
+  const lessonPath = `${COACH}/sessions/${lesson.id}`;
+  await coach.goto(`${APP}${COACH}`);
+  await coach.locator(`a[href="${lessonPath}"]`).first().click();
+  check(await landed(coach, lessonPath), "a session in Next 14 days opens its session page");
+  check((await coach.getByRole("heading", { name: lesson.title }).isVisible()) && (await said(coach, "Starts in")), "the page shows the session and a countdown");
+  const firstName = lesson.athlete.split(" ")[0];
+  const callHref = await coach.getByRole("link", { name: `Call ${firstName}`, exact: true }).getAttribute("href");
+  const waHref = await coach.getByRole("link", { name: "WhatsApp", exact: true }).getAttribute("href");
+  check(callHref === `tel:${lesson.phone}` && waHref?.startsWith(`https://wa.me/${lesson.phone.slice(1)}?text=Hi%20${encodeURIComponent(firstName)}`), "one tap to call the athlete (tel:) or WhatsApp them with a ready message");
+  const athleteRow = coach.getByRole("listitem").filter({ has: coach.getByRole("link", { name: `Call ${lesson.athlete},` }) });
+  check(
+    (await athleteRow.getByText("session with you").isVisible()) && (await athleteRow.getByText("To collect at the club · €45.00").isVisible()) && (await athleteRow.getByText("Check-in opens 30 minutes before").isVisible()),
+    "each athlete shows their history with the coach, what's still to collect, and when check-in opens",
+  );
+  check(((await coach.getByRole("link", { name: "Directions" }).getAttribute("href")) ?? "").startsWith("https://www.google.com/maps/search/?api=1&query=Padel%20Central"), "Directions opens the club in Maps");
+  const ics = await coach.request.get(`${APP}${lessonPath}/calendar`);
+  const icsBody = await ics.text();
+  check(ics.status() === 200 && ics.headers()["content-type"]?.startsWith("text/calendar") && icsBody.includes("BEGIN:VEVENT") && icsBody.includes("TRIGGER:-PT30M") && icsBody.includes(`UID:session-${lesson.id}@nexport`), "Add to calendar downloads an .ics event with a 30-minute reminder");
+  const othersSession = (await one(`SELECT id FROM "PracticeSession" WHERE "coachId" <> 'democoach01' LIMIT 1`)).id;
+  check((await status(coach, `${COACH}/sessions/${othersSession}`)) === 404 && (await coach.request.get(`${APP}${COACH}/sessions/${othersSession}/calendar`)).status() === 404, "another coach's session (page or calendar) is a 404");
+  check((await status(coach, `${COACH}/sessions/x'%20OR%201=1--`)) === 404, "a malformed session id is a 404");
+
+  // The session wrapped up earlier: check-in is open, and a private note can be kept.
+  await coach.goto(`${APP}${COACH}/sessions/${wrapId}`);
+  const wrapRow = coach.locator(`[data-participant-id="${participant.id}"]`);
+  check((await wrapRow.getByRole("button", { name: "Present" }).isVisible()) && (await coach.getByRole("region", { name: /^Athletes/ }).isVisible()), "a started session offers check-in on the session page");
+  await wrapRow.getByText("Private note").click();
+  await wrapRow.getByLabel("What to work on next").fill("<script>alert(1)</script> Bandeja contact point");
+  await wrapRow.getByLabel("Session").selectOption("4");
+  await wrapRow.getByRole("button", { name: "Save note" }).click();
+  check(await said(wrapRow, "Note saved."), "the coach saves a private note and a rating on the athlete");
+  const note = await one(`SELECT "coachFeedback", "performanceRating" FROM "Attendance" WHERE "participantId" = $1`, [participant.id]);
+  check(note.coachFeedback === "<script>alert(1)</script> Bandeja contact point" && note.performanceRating === 4, "…stored as plain text with its rating");
+  await coach.reload();
+  check((await wrapRow.getByText("Private note · ★★★★☆").isVisible()) && (await wrapRow.getByLabel("What to work on next").inputValue()).includes("<script>"), "…and shown back as text (never run), with the stars");
+
   // 8. Earnings ------------------------------------------------------------------------
   await coach.goto(`${APP}${COACH}/earnings`);
   const { txs } = await one(`SELECT count(*)::int AS txs FROM "PaymentTransaction" pt JOIN "PracticeSession" s ON s.id = pt."sessionId" WHERE s."coachId" = 'democoach01' AND pt.status = 'SUCCEEDED'`);
@@ -337,7 +380,7 @@ try {
   await db.query(`UPDATE "EmailCode" SET "createdAt" = now() - interval '2 minutes' WHERE email = 'coach01@demo.nexport.test'`);
   const phone = await emailSignIn(await newContext(), "coach01@demo.nexport.test");
   await phone.setViewportSize({ width: 375, height: 812 });
-  for (const path of [COACH, `${COACH}/students`, `${COACH}/availability`, `${COACH}/earnings`, "/coach/lucia-e2e"]) {
+  for (const path of [COACH, `${COACH}/students`, `${COACH}/availability`, `${COACH}/earnings`, "/coach/lucia-e2e", lessonPath]) {
     await phone.goto(`${APP}${path}`);
     const overflow = await phone.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     check(new URL(phone.url()).pathname === path && overflow <= 0, `no horizontal page scroll at 375px on ${path}`);

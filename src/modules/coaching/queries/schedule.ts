@@ -107,3 +107,106 @@ export async function getSessionFormOptions(clubIds: string[]) {
   ]);
   return { facilities, sports, equipment };
 }
+
+export type SessionAthlete = {
+  participantId: string;
+  userId: string;
+  status: "INVITED" | "ACCEPTED" | "DECLINED" | "WAITLISTED" | "CANCELLED" | "REMOVED";
+  name: string | null;
+  email: string;
+  phone: string | null;
+  handle: string | null;
+  levelRating: number | null;
+  level: string | null;
+  attendance: "PRESENT" | "LATE" | "ABSENT" | "EXCUSED" | null;
+  feedback: string | null;
+  rating: number | null;
+  paymentStatus: string | null;
+  paymentAmount: number | null;
+  /** Earlier sessions (not cancelled) with this coach, and when the last one was. */
+  previous: number;
+  lastAt: Date | null;
+};
+
+/**
+ * One session the coach runs, with everything the session page shows: where
+ * (club address, court), who (athletes with contact details, level for the
+ * session's sport, attendance, payment, history with this coach) and what's
+ * reserved. Null when it isn't the coach's session, so another coach's id is
+ * a 404. The phone number is shown here because these are the coach's own
+ * athletes (docs/onboarding.md: who may see a phone number).
+ */
+export async function getCoachSessionDetail(coachId: string, sessionId: string) {
+  const [session] = await rows<{
+    id: string;
+    title: string;
+    description: string | null;
+    kind: CoachSession["kind"];
+    status: CoachSession["status"];
+    startsAt: Date;
+    endsAt: Date;
+    maxParticipants: number | null;
+    priceAmount: number;
+    currency: string;
+    minLevel: number | null;
+    maxLevel: number | null;
+    cancellationReason: string | null;
+    sportId: string;
+    sportName: string;
+    facilityName: string;
+    clubName: string;
+    clubTimezone: string;
+    clubPhone: string | null;
+    addressLine1: string | null;
+    city: string | null;
+    postalCode: string | null;
+    country: string;
+  }>(sql`
+    SELECT s.id, s.title, s.description, s.kind, s.status, s."startsAt", s."endsAt", s."maxParticipants", s."priceAmount", s.currency,
+           s."minLevel"::float8 AS "minLevel", s."maxLevel"::float8 AS "maxLevel", s."cancellationReason", s."sportId", sp.name AS "sportName", f.name AS "facilityName",
+           c.name AS "clubName", c.timezone AS "clubTimezone", c.phone AS "clubPhone", c."addressLine1", c.city, c."postalCode", c.country
+      FROM "PracticeSession" s
+      JOIN "Club" c ON c.id = s."clubId"
+      JOIN "Facility" f ON f.id = s."facilityId"
+      JOIN "Sport" sp ON sp.id = s."sportId"
+     WHERE s.id = ${sessionId} AND s."coachId" = ${coachId}`);
+  if (!session) return null;
+
+  const [athletes, equipment] = await Promise.all([
+    rows<SessionAthlete>(sql`
+      SELECT p.id AS "participantId", p."userId", p.status, u.name, u.email, pr.phone, pr.handle,
+             ps."levelRating"::float8 AS "levelRating", ps.level, a.status AS attendance, a."coachFeedback" AS feedback, a."performanceRating" AS rating,
+             pay.status AS "paymentStatus", pay.amount AS "paymentAmount",
+             hist.previous, hist."lastAt"
+        FROM "SessionParticipant" p
+        JOIN "User" u ON u.id = p."userId"
+        LEFT JOIN "Profile" pr ON pr."userId" = u.id
+        LEFT JOIN "ProfileSport" ps ON ps."profileId" = pr.id AND ps."sportId" = ${session.sportId}
+        LEFT JOIN "Attendance" a ON a."participantId" = p.id
+        LEFT JOIN LATERAL (
+          SELECT pt.status::text, pt.amount FROM "PaymentTransaction" pt
+           WHERE pt."participantId" = p.id ORDER BY (pt.status = 'SUCCEEDED') DESC, pt."createdAt" DESC LIMIT 1
+        ) pay ON true
+        LEFT JOIN LATERAL (
+          SELECT count(*)::int AS previous, max(s2."startsAt") AS "lastAt"
+            FROM "SessionParticipant" p2 JOIN "PracticeSession" s2 ON s2.id = p2."sessionId"
+           WHERE p2."userId" = p."userId" AND p2.status = 'ACCEPTED' AND s2."coachId" = ${coachId}
+             AND s2.status <> 'CANCELLED' AND s2."startsAt" < ${new Date(session.startsAt)}
+        ) hist ON true
+       WHERE p."sessionId" = ${sessionId} AND p.status IN ('ACCEPTED', 'INVITED', 'WAITLISTED')
+       ORDER BY p.status, COALESCE(u.name, u.email)`),
+    rows<{ name: string; quantity: number }>(sql`
+      SELECT e.name, eb.quantity FROM "EquipmentBooking" eb JOIN "Equipment" e ON e.id = eb."equipmentId"
+       WHERE eb."sessionId" = ${sessionId} AND eb.status <> 'CANCELLED' ORDER BY e.name`),
+  ]);
+
+  return {
+    ...session,
+    startsAt: new Date(session.startsAt),
+    endsAt: new Date(session.endsAt),
+    athletes: athletes.map((a) => ({ ...a, lastAt: a.lastAt ? new Date(a.lastAt) : null })),
+    equipment,
+  };
+}
+
+export type CoachSessionDetail = NonNullable<Awaited<ReturnType<typeof getCoachSessionDetail>>>;

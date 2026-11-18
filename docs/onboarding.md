@@ -76,7 +76,8 @@ sign-in email is shown but can't be changed.
 The phone number is private: it never appears on public pages (the coach
 booking page or profiles). It is shown as a `tel:` link only to people who
 work with that person:
-- a coach's **Students** list;
+- a coach's **Students** list, and the athletes on a **session page** of a
+  session that coach runs (call, WhatsApp);
 - the club's **Staff** roster;
 - the club's **Memberships** pass holders.
 

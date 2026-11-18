@@ -159,7 +159,7 @@ export async function cancelSession(_prev: ActionState, formData: FormData): Pro
     .where(and(ownSession(coach.id, parsed.data.sessionId), eq(practiceSession.status, "SCHEDULED"), gt(practiceSession.startsAt, sql`now()`)))
     .returning({ id: practiceSession.id });
   if (updated.length === 0) return { error: "Only your upcoming, scheduled sessions can be cancelled." };
-  revalidateCoach("", "/students");
+  revalidateCoach("", "/students", `/sessions/${parsed.data.sessionId}`);
   return { ok: "Session cancelled. The court and any equipment are free again." };
 }
 
@@ -173,7 +173,7 @@ export async function completeSession(_prev: ActionState, formData: FormData): P
     .where(and(ownSession(coach.id, String(parsed.data.sessionId)), inArray(practiceSession.status, ["SCHEDULED", "IN_PROGRESS"]), lte(practiceSession.startsAt, sql`now()`)))
     .returning({ id: practiceSession.id });
   if (updated.length === 0) return { error: "Only sessions that have started can be completed." };
-  revalidateCoach("", "/students");
+  revalidateCoach("", "/students", `/sessions/${updated[0]!.id}`);
   return { ok: "Completed. It now counts towards your hours." };
 }
 
@@ -203,6 +203,6 @@ export async function addParticipant(_prev: ActionState, formData: FormData): Pr
     if (message) return { error: message, values };
     throw e;
   }
-  revalidateCoach("", "/students");
+  revalidateCoach("", "/students", `/sessions/${session.id}`);
   return { ok: `${parsed.data.email} added.` };
 }

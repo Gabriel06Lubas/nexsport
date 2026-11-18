@@ -9,6 +9,7 @@ and students book them on a public page at `/coach/<link>`.
 | `/dashboard/coach/students` | **Students & credits**: check-in (Present / Late / Absent), session passes with −1 / +1, student directory |
 | `/dashboard/coach/availability` | **Booking link & rates**: public link, rates, session length, notice, weekly working hours per club |
 | `/dashboard/coach/earnings` | **Earnings & Stripe**: Connect status, payouts, breakdown by stream, transaction history |
+| `/dashboard/coach/sessions/<id>` | **Session page**: one session the coach runs (opened from *Next 14 days* or the week timeline) |
 | `/coach/<link>` | Public booking page (anyone can view; booking needs an account) |
 
 ## Try it
@@ -65,6 +66,32 @@ An open match can carry a level range (e.g. 3.0–4.0). With no price, each
 player pays an equal share of the court's price for that slot. Students at a
 fitting level who prefer the club get an email alert; they join and pay from
 their dashboard (see [student-dashboard.md](student-dashboard.md)).
+
+## Session page
+
+Opened by tapping a session in *Next 14 days* or on the week timeline. Made
+for a phone at the court as much as a desk:
+- **When and where**: date, time and length; a countdown ("Starts in 2 h",
+  "Happening now", "Ended 3 h ago"); club, court and address.
+- **One tap**: *Directions* (Google Maps), *Add to calendar* (an `.ics`
+  file with a 30-minute reminder, `…/calendar`), and for a one-to-one
+  session *Call* and *WhatsApp* (with a ready message); *Email all* in Bcc
+  for groups; *Call the club* when it has a number.
+- **Each athlete**: level for the session's sport, how many sessions they've
+  had with this coach and when the last was, payment (paid online, pending,
+  or to collect at the club), and their phone, WhatsApp and email.
+- **Check-in** (from 30 minutes before the start, also after completing),
+  and a **private note** with a 1–5 rating per checked-in athlete, kept on
+  the check-in (`Attendance.coachFeedback` / `performanceRating`). The
+  athlete doesn't see it.
+- **Manage**: add a student, mark completed, cancel with a reason.
+- Totals: expected from the athletes going, and what's already paid online.
+
+Only the coach who runs the session can open it (or its calendar file):
+anyone else gets a 404. Helpers are in `lib/session-detail.ts` (unit
+tested): the countdown, links (WhatsApp only for a valid E.164 number; email
+addresses checked and encoded so nothing can add headers), and the calendar
+file (escaped and folded as RFC 5545 requires).
 
 ## Public booking
 

@@ -68,7 +68,7 @@ export function WeekTimeline({ days, fromHour, toHour, todayKey }: { days: DayCo
                 return (
                   <Link
                     key={s.id}
-                    href={`#session-${s.id}` as Route}
+                    href={`/dashboard/coach/sessions/${s.id}` as Route}
                     title={`${k.label}: ${s.title}, ${hh(s.startMinute)}–${hh(s.endMinute)}, ${s.clubName} · ${s.facilityName}`}
                     className={cn("absolute inset-x-0.5 overflow-hidden rounded-md border-l-[3px] px-1.5 py-1 text-[11px] leading-tight", cancelled && "border-dashed opacity-50")}
                     style={{

@@ -162,7 +162,11 @@ function UpcomingRow({ session: s, tz }: { session: CoachSession; tz: string }) 
   return (
     <li id={`session-${s.id}`} className="scroll-mt-24 space-y-2 px-5 py-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
+        <Link
+          href={`/dashboard/coach/sessions/${s.id}` as Route}
+          aria-label={`Open ${s.title}, ${dayLabel(zonedParts(s.startsAt, tz).dateKey)} ${formatTime(s.startsAt, tz)}`}
+          className="group -mx-2 -my-1 min-w-0 flex-1 rounded-xl px-2 py-1 transition hover:bg-muted/60"
+        >
           <p className="text-sm">
             <span className="font-medium tabular-nums">
               {dayLabel(zonedParts(s.startsAt, tz).dateKey)} {formatTime(s.startsAt, tz)}–{formatTime(s.endsAt, tz)}
@@ -178,7 +182,10 @@ function UpcomingRow({ session: s, tz }: { session: CoachSession; tz: string }) 
             {s.priceAmount > 0 && <> · {formatMoney(s.priceAmount, s.currency)} each</>}
             {s.students && <> · {s.students}</>}
           </p>
-        </div>
+          <p className="mt-1 inline-flex items-center gap-0.5 text-xs font-medium text-accent-text">
+            Details, contacts &amp; check-in <ChevronRight className="size-3.5 transition group-hover:translate-x-0.5" aria-hidden />
+          </p>
+        </Link>
         <div className="flex flex-wrap items-start gap-2">
           {!full && (
             <details>
